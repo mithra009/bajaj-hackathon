@@ -197,13 +197,32 @@ class LLMService:
             
         return responses
 
+    async def _process_batch_with_key(self, queries: List[str], document_link: str, metadata: Dict[str, Any], api_key: str) -> Dict[str, str]:
+        """Process a batch with a specific API key."""
+        # Create a new instance with the specified API key
+        temp_service = LLMService()
+        temp_service.api_key = api_key
+        temp_service._setup_genai()
+        
+        # Log the batch processing with API key info
+        logger.info(f"Processing batch {metadata.get('batch_num', '?')}/{metadata.get('total_batches', '?')} "
+                  f"with {len(queries)} queries using API key ...{api_key[-4:]}")
+        
+        try:
+            return await temp_service._process_batch(queries, document_link, metadata)
+        except Exception as e:
+            logger.error(f"Error in batch {metadata.get('batch_num', '?')}: {str(e)}")
+            return {f"Query {i+1}": "I couldn't find a specific answer to this question in the document." 
+                    for i in range(len(queries))}
+        
     async def _process_batch(self, queries: List[str], document_link: str, metadata: Dict[str, Any]) -> Dict[str, str]:
         """Process a single batch of queries (up to MAX_QUERIES_PER_BATCH)."""
         try:
             prompt = self._prepare_prompt(queries, document_link)
             
             # Log the batch processing
-            logger.info(f"Processing batch of {len(queries)} queries")
+            logger.info(f"Processing batch {metadata.get('batch_num', '?')}/{metadata.get('total_batches', '?')} "
+                      f"with {len(queries)} queries")
             
             response = await self.model.generate_content_async(
                 prompt,
@@ -268,37 +287,63 @@ class LLMService:
             
             # Split queries into batches if needed
             query_batches = [queries[i:i + MAX_QUERIES_PER_BATCH] 
-                           for i in range(0, len(queries), MAX_QUERIES_PER_BATCH)]
+                          for i in range(0, len(queries), MAX_QUERIES_PER_BATCH)]
             
-            # Process batches concurrently
-            tasks = [self._process_batch(batch, document_link, {
-                **query_metadata,
-                "batch_num": i + 1,
-                "total_batches": len(query_batches)
-            }) for i, batch in enumerate(query_batches)]
+            # Create a list to store batch tasks with their assigned API keys
+            batch_tasks = []
+            used_keys = set()
             
-            batch_responses = await asyncio.gather(*tasks, return_exceptions=True)
+            # Assign a unique API key to each batch
+            for batch_num, batch in enumerate(query_batches, 1):
+                # Get an API key that hasn't been used yet, or cycle through if we've used them all
+                available_keys = [k for k in API_KEYS if k not in used_keys]
+                if not available_keys:
+                    # If we've used all keys, clear the set and start over
+                    used_keys.clear()
+                    available_keys = API_KEYS.copy()
+                
+                batch_key = random.choice(available_keys)
+                used_keys.add(batch_key)
+                
+                batch_metadata = {
+                    **query_metadata,
+                    "batch_num": batch_num,
+                    "total_batches": len(query_batches),
+                    "api_key_used": f"...{batch_key[-4:]}"  # Log last 4 chars for tracking
+                }
+                
+                # Create a task for this batch with its own LLMService instance
+                task = self._process_batch_with_key(
+                    batch, 
+                    document_link, 
+                    batch_metadata, 
+                    batch_key
+                )
+                batch_tasks.append(task)
             
-            # Combine responses from all batches
+            # Process all batches in parallel
+            batch_responses = await asyncio.gather(*batch_tasks, return_exceptions=True)
+            
+            # Combine all responses
             combined_responses = {}
             query_counter = 1
             
-            for batch_idx, batch in enumerate(batch_responses):
-                if isinstance(batch, dict):
-                    # Get the actual number of queries in this batch (last batch might be smaller)
-                    actual_batch_size = len(query_batches[batch_idx])
-                    for i in range(actual_batch_size):
+            for batch_idx, batch_response in enumerate(batch_responses):
+                batch = query_batches[batch_idx] if batch_idx < len(query_batches) else []
+                
+                if isinstance(batch_response, dict):
+                    # Add successful batch responses
+                    for i in range(len(batch)):
                         q_num = f"Query {i+1}"  # The original query number within the batch
-                        if q_num in batch:
-                            combined_responses[f"Query {query_counter}"] = batch[q_num]
+                        if q_num in batch_response:
+                            combined_responses[f"Query {query_counter}"] = batch_response[q_num]
                         else:
                             combined_responses[f"Query {query_counter}"] = \
                                 "I couldn't find a specific answer to this question in the document."
                         query_counter += 1
                 else:
-                    # Handle failed batches with default responses
-                    actual_batch_size = len(query_batches[batch_idx])
-                    for _ in range(actual_batch_size):
+                    # Handle failed batch with default responses
+                    for _ in range(len(batch)):
                         if query_counter <= len(queries):
                             combined_responses[f"Query {query_counter}"] = \
                                 "I couldn't find a specific answer to this question in the document."
