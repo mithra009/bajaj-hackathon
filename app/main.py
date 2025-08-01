@@ -34,7 +34,7 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
         )
     return credentials.credentials
 
-from app.services.llm_service import llm_service
+from app.services.llm_service import optimized_llm_service as llm_service
 from app.services.query_logger import query_logger
 
 # CORS middleware
