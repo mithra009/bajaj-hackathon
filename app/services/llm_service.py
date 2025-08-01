@@ -198,20 +198,40 @@ class LLMService:
         return responses
 
     async def _process_batch_with_key(self, queries: List[str], document_link: str, metadata: Dict[str, Any], api_key: str) -> Dict[str, str]:
-        """Process a batch with a specific API key."""
-        # Create a new instance with the specified API key
-        temp_service = LLMService()
-        temp_service.api_key = api_key
-        temp_service._setup_genai()
+        """Process a batch of queries in one go with a specific API key."""
+        batch_num = metadata.get('batch_num', '?')
+        total_batches = metadata.get('total_batches', '?')
         
-        # Log the batch processing with API key info
-        logger.info(f"Processing batch {metadata.get('batch_num', '?')}/{metadata.get('total_batches', '?')} "
-                  f"with {len(queries)} queries using API key ...{api_key[-4:]}")
+        logger.info(f"Processing batch {batch_num}/{total_batches} with {len(queries)} queries using API key ...{api_key[-4:]}")
         
         try:
-            return await temp_service._process_batch(queries, document_link, metadata)
+            # Create a new instance with the specified API key
+            temp_service = LLMService()
+            temp_service.api_key = api_key
+            temp_service._setup_genai()
+            
+            # Process all queries in this batch in one go
+            response = await temp_service.model.generate_content_async(
+                self._prepare_prompt(queries, document_link),
+                generation_config={
+                    "max_output_tokens": self.max_tokens,
+                    "temperature": 0.1
+                },
+                safety_settings={
+                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                }
+            )
+            
+            # Parse the response for all queries in this batch
+            response_text = response.text
+            return self._parse_llm_response(response_text, queries)
+            
         except Exception as e:
-            logger.error(f"Error in batch {metadata.get('batch_num', '?')}: {str(e)}")
+            logger.error(f"Error in batch {batch_num}: {str(e)}")
+            # Return default responses for all queries in this batch
             return {f"Query {i+1}": "I couldn't find a specific answer to this question in the document." 
                     for i in range(len(queries))}
         
@@ -249,15 +269,7 @@ class LLMService:
 
     async def generate_response(self, queries: List[str], document_link: str, metadata: Dict[str, Any] = None) -> Dict[str, str]:
         """
-        Validates input, checks document accessibility, and processes queries in batches if needed.
-        
-        Args:
-            queries: List of questions to ask about the document
-            document_link: URL of the document to query
-            metadata: Additional metadata to store with the query log
-            
-        Returns:
-            Dictionary mapping query numbers to their responses
+        Validates input, checks document accessibility, and processes queries in parallel.
         """
         start_time = time.time()
         metadata = metadata or {}
