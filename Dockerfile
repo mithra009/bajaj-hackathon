@@ -35,8 +35,12 @@ COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 ENV PYTHONPATH="/app"
 
-# Create app directory and copy application code
-RUN mkdir -p /app/app
+# Create app and logs directories with correct permissions
+RUN mkdir -p /app/app /app/logs && \
+    chown -R appuser:appuser /app && \
+    chmod 755 /app/logs
+
+# Copy application code
 COPY --chown=appuser:appuser app /app/app
 COPY --chown=appuser:appuser requirements.txt /app/
 
