@@ -5,10 +5,17 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import uvicorn
 import time
+from datetime import datetime
 
 # Security
 security = HTTPBearer()
 API_KEY = "fd53cda9e372cc74319d047c60acdcc06e62e7e5550a92d842c425b82df84e4d"
+
+app = FastAPI(
+    title="LLM Query API",
+    version="1.0.0",
+    description="API for querying documents using Google's Gemini LLM"
+)
 
 def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """Verify the provided API key"""
@@ -21,8 +28,6 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     return credentials.credentials
 
 from app.services.llm_service import llm_service
-
-app = FastAPI(title="LLM Query API", version="1.0.0")
 
 # CORS middleware
 app.add_middleware(
@@ -99,10 +104,34 @@ async def query_document(request: QueryRequest):
 
 
 
+@app.get("/")
+async def root():
+    return {
+        "message": "LLM Query API is running",
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "endpoints": {
+            "document_query": {
+                "method": "POST",
+                "path": "/hackrx/run",
+                "description": "Query documents with a list of questions"
+            },
+            "health": {
+                "method": "GET",
+                "path": "/health",
+                "description": "Check API health status"
+            }
+        },
+        "documentation": "Add /docs to the URL for interactive API documentation"
+    }
+
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "timestamp": datetime.utcnow().isoformat(),
+        "version": app.version
+    }
 
 if __name__ == "__main__":
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
