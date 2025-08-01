@@ -282,14 +282,23 @@ class LLMService:
             # Combine responses from all batches
             combined_responses = {}
             query_counter = 1
-            for batch in batch_responses:
+            
+            for batch_idx, batch in enumerate(batch_responses):
                 if isinstance(batch, dict):
-                    for q_num, answer in batch.items():
-                        combined_responses[f"Query {query_counter}"] = answer
+                    # Get the actual number of queries in this batch (last batch might be smaller)
+                    actual_batch_size = len(query_batches[batch_idx])
+                    for i in range(actual_batch_size):
+                        q_num = f"Query {i+1}"  # The original query number within the batch
+                        if q_num in batch:
+                            combined_responses[f"Query {query_counter}"] = batch[q_num]
+                        else:
+                            combined_responses[f"Query {query_counter}"] = \
+                                "I couldn't find a specific answer to this question in the document."
                         query_counter += 1
                 else:
                     # Handle failed batches with default responses
-                    for _ in range(MAX_QUERIES_PER_BATCH):
+                    actual_batch_size = len(query_batches[batch_idx])
+                    for _ in range(actual_batch_size):
                         if query_counter <= len(queries):
                             combined_responses[f"Query {query_counter}"] = \
                                 "I couldn't find a specific answer to this question in the document."
