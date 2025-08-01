@@ -9,6 +9,7 @@ import traceback
 import json
 import random
 import logging
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
@@ -42,34 +43,76 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class LLMService:
+class OptimizedLLMService:
     def __init__(self):
-        """Initializes the LLMService with a random API key from the list."""
+        """Initializes the LLMService with optimizations for better performance."""
         if not API_KEYS:
             raise ValueError("No API keys provided in the API_KEYS list")
-            
-        if not API_KEYS:
-            raise ValueError("No API keys available")
             
         self.api_key = random.choice(API_KEYS)
         self.model_name = MODEL_NAME
         self.max_tokens = MAX_TOKENS
-        logger.info(f"Initializing LLMService with model: {self.model_name}")
+        
+        # Performance optimizations
+        self._http_client = None
+        self._response_cache = {}
+        self._document_accessibility_cache = {}
+        self._key_usage_tracker = {key: {"last_used": 0, "error_count": 0} for key in API_KEYS}
+        
+        logger.info(f"Initializing OptimizedLLMService with model: {self.model_name}")
         self._setup_genai()
 
-    def _setup_genai(self, used_keys=None):
-        """Configures the Gemini API client with the current API key.
+    async def _get_http_client(self):
+        """Get or create a reusable HTTP client with optimized settings."""
+        if not self._http_client:
+            self._http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(5.0),  # Reduced timeout for faster failure detection
+                limits=httpx.Limits(max_connections=20, max_keepalive_connections=10)
+            )
+        return self._http_client
+
+    def _get_cache_key(self, queries: List[str], document_link: str) -> str:
+        """Generate a cache key for the queries and document combination."""
+        combined = f"{document_link}:{':'.join(sorted(queries))}"
+        return hashlib.md5(combined.encode()).hexdigest()
+
+    def _calculate_optimal_batch_size(self, queries: List[str]) -> int:
+        """Calculate optimal batch size based on query complexity."""
+        if not queries:
+            return MAX_QUERIES_PER_BATCH
+            
+        avg_query_length = sum(len(q) for q in queries) / len(queries)
+        if avg_query_length > 200:  # Long queries
+            return max(3, MAX_QUERIES_PER_BATCH // 2)
+        elif avg_query_length < 50:  # Short queries
+            return min(MAX_QUERIES_PER_BATCH * 2, 20)
+        return MAX_QUERIES_PER_BATCH
+
+    def _get_best_available_key(self, used_keys: set) -> str:
+        """Select the best API key based on usage patterns and error rates."""
+        available_keys = [k for k in API_KEYS if k not in used_keys]
+        if not available_keys:
+            # Reset if all keys have been used
+            return random.choice(API_KEYS)
         
-        Args:
-            used_keys: Set of API keys that have already been tried
-        """
+        # Prefer keys with lower error rates and longer time since last use
+        current_time = time.time()
+        best_key = min(available_keys, 
+                      key=lambda k: (
+                          self._key_usage_tracker[k]["error_count"], 
+                          -(current_time - self._key_usage_tracker[k]["last_used"])
+                      ))
+        
+        # Update usage tracking
+        self._key_usage_tracker[best_key]["last_used"] = current_time
+        return best_key
+
+    def _setup_genai(self, used_keys=None):
+        """Configures the Gemini API client with the current API key."""
         used_keys = used_keys or set()
         
         if not self.api_key:
-            available_keys = [k for k in API_KEYS if k not in used_keys]
-            if not available_keys:
-                raise ValueError("No available API keys left to try")
-            self.api_key = random.choice(available_keys)
+            self.api_key = self._get_best_available_key(used_keys)
             
         try:
             genai.configure(api_key=self.api_key)
@@ -79,66 +122,18 @@ class LLMService:
             error_msg = str(e).lower()
             logger.error(f"Error with API key {self.api_key[:10]}...: {error_msg}")
             
-            # Mark this key as used
+            # Update error tracking
+            self._key_usage_tracker[self.api_key]["error_count"] += 1
             used_keys.add(self.api_key)
             
             # Try a different API key if available
             available_keys = [k for k in API_KEYS if k not in used_keys]
             if available_keys:
-                self.api_key = random.choice(available_keys)
+                self.api_key = self._get_best_available_key(used_keys)
                 logger.info(f"Retrying with API key: {self.api_key[:10]}...")
                 return self._setup_genai(used_keys)
                 
-            # If we get here, no more keys to try
             raise ValueError("All API keys have been exhausted. Please add more keys or try again later.")
-
-    async def _call_llm(self, prompt: str, retry_count: int = 0, used_keys: set = None) -> str:
-        """Calls the LLM with the given prompt and returns the response.
-        
-        Args:
-            prompt: The prompt to send to the LLM
-            retry_count: Number of retry attempts so far
-            used_keys: Set of API keys that have already been tried
-            
-        Returns:
-            The LLM response text
-            
-        Raises:
-            Exception: If all retry attempts fail
-        """
-        used_keys = used_keys or set()
-        max_retries = len(API_KEYS) * 2  # Allow trying each key twice
-        
-        try:
-            response = await self.model.generate_content_async(prompt)
-            return response.text
-            
-        except Exception as e:
-            error_msg = str(e).lower()
-            logger.error(f"Error calling LLM: {error_msg}")
-            
-            # Check if this is a rate limit or quota error
-            is_rate_limit = any(keyword in error_msg for keyword in [
-                "rate limit", "quota", "limit exceeded", 
-                "quota exceeded", "429", "resource exhausted"
-            ])
-            
-            if is_rate_limit and retry_count < max_retries:
-                logger.info(f"Rate limit hit. Retrying with a different API key (attempt {retry_count + 1}/{max_retries})...")
-                # Mark current key as used
-                used_keys.add(self.api_key)
-                # Get a new key
-                available_keys = [k for k in API_KEYS if k not in used_keys]
-                if available_keys:
-                    self.api_key = random.choice(available_keys)
-                    logger.info(f"Switching to API key: {self.api_key[:10]}...")
-                    # Re-initialize with new key
-                    self._setup_genai(used_keys)
-                    # Retry the request
-                    return await self._call_llm(prompt, retry_count + 1, used_keys)
-            
-            # If we get here, either it's not a rate limit error or we've exhausted retries
-            raise
 
     def _is_valid_url(self, url: str) -> bool:
         """Checks if a URL string is well-formed."""
@@ -148,30 +143,38 @@ class LLMService:
         except ValueError:
             return False
 
-    async def _is_document_accessible(self, url: str) -> bool:
-        """Checks if a document is accessible via an async HTTP HEAD request."""
+    async def _is_document_accessible(self, url: str, use_cache: bool = True) -> bool:
+        """Checks if a document is accessible with caching for performance."""
+        if use_cache and url in self._document_accessibility_cache:
+            cache_time, result = self._document_accessibility_cache[url]
+            # Cache for 5 minutes
+            if time.time() - cache_time < 300:
+                return result
+        
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.head(url, timeout=10, follow_redirects=True)
-                return response.status_code == 200
-        except httpx.RequestError:
+            client = await self._get_http_client()
+            response = await client.head(url, timeout=5.0, follow_redirects=True)
+            result = response.status_code == 200
+            
+            if use_cache:
+                self._document_accessibility_cache[url] = (time.time(), result)
+            
+            return result
+        except (httpx.RequestError, httpx.TimeoutException):
+            if use_cache:
+                self._document_accessibility_cache[url] = (time.time(), False)
             return False
 
-    def _prepare_prompt(self, queries: List[str], document_link: str) -> str:
-        """Prepares the structured prompt for the LLM."""
+    def _prepare_optimized_prompt(self, queries: List[str], document_link: str) -> str:
+        """Prepares an optimized, more concise prompt for faster processing."""
         prompt_parts = [
-            "Answer all questions based on document. If the answer is in the document, give a clear, concise response in under 1000 characters. If it is not in the document, then provide a brief and general answer."
-            f"Document Link: {document_link}\n\n",
-            "===== QUESTIONS TO ANSWER =====\n"
+            f"Document: {document_link}\n\n",
+            "Answer each question concisely (<500 chars each) based on the document. If not in document, give brief general answer.\n",
+            "Format: Answer N: [response]\n\n"
         ]
+        
         for i, query in enumerate(queries, 1):
             prompt_parts.append(f"{i}. {query}\n")
-        
-        prompt_parts.append("\n===== YOUR RESPONSES =====\n")
-        prompt_parts.append("Please provide your responses in the following format for each question:\n")
-        
-        for i in range(1, len(queries) + 1):
-            prompt_parts.append(f"Answer {i}: [Your answer to question {i}]\n")
             
         return "".join(prompt_parts)
 
@@ -181,8 +184,7 @@ class LLMService:
         lines = [line.strip() for line in response_text.split('\n') if line.strip()]
         
         for i, query in enumerate(queries, 1):
-            query_num = i
-            answer_prefix = f"Answer {query_num}:"
+            answer_prefix = f"Answer {i}:"
             found_answer = "I couldn't find a specific answer to this question in the document."
             
             for line in lines:
@@ -193,29 +195,33 @@ class LLMService:
                        (found_answer.startswith("'") and found_answer.endswith("'")):
                         found_answer = found_answer[1:-1]
                     break
-            responses[f"Query {query_num}"] = found_answer
+            responses[f"Query {i}"] = found_answer
             
         return responses
 
-    async def _process_batch_with_key(self, queries: List[str], document_link: str, metadata: Dict[str, Any], api_key: str) -> Dict[str, str]:
+    async def _process_batch_with_key(self, queries: List[str], document_link: str, 
+                                    metadata: Dict[str, Any], api_key: str) -> Dict[str, str]:
         """Process a batch of queries with a specific API key."""
         try:
             # Create a new instance with the specified API key
-            temp_service = LLMService()
+            temp_service = OptimizedLLMService()
             temp_service.api_key = api_key
             temp_service._setup_genai()
             
-            # Process all queries in this batch in one go
-            prompt = temp_service._prepare_prompt(queries, document_link)
+            # Use optimized prompt
+            prompt = temp_service._prepare_optimized_prompt(queries, document_link)
             
             logger.info(f"Processing batch {metadata.get('batch_num', '?')}/{metadata.get('total_batches', '?')} "
                       f"with {len(queries)} queries using API key ...{api_key[-4:]}")
             
+            # Optimized generation config for faster responses
             response = await temp_service.model.generate_content_async(
                 prompt,
                 generation_config={
-                    "max_output_tokens": self.max_tokens,
-                    "temperature": 0.1
+                    "max_output_tokens": min(self.max_tokens, 800),  # Reduced for faster processing
+                    "temperature": 0.0,  # Deterministic responses are faster
+                    "top_p": 0.8,       # Reduce search space
+                    "top_k": 20         # Further limit token selection
                 },
                 safety_settings={
                     HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
@@ -230,29 +236,32 @@ class LLMService:
             
         except Exception as e:
             logger.error(f"Error processing batch: {str(e)}")
+            # Update error tracking
+            if api_key in self._key_usage_tracker:
+                self._key_usage_tracker[api_key]["error_count"] += 1
+            
             # Return default responses for this batch
             return {f"Query {i+1}": "I couldn't find a specific answer to this question in the document." 
                     for i in range(len(queries))}
-    
-    async def _process_batch(self, queries: List[str], document_link: str, metadata: Dict[str, Any]) -> Dict[str, str]:
-        """Process a single batch of queries (up to MAX_QUERIES_PER_BATCH)."""
-        # Use the current API key for this batch
-        return await self._process_batch_with_key(queries, document_link, metadata, self.api_key)
 
-    async def generate_response(self, queries: List[str], document_link: str, metadata: Dict[str, Any] = None) -> Dict[str, str]:
+    async def generate_response(self, queries: List[str], document_link: str, 
+                              metadata: Dict[str, Any] = None, use_cache: bool = True,
+                              skip_accessibility_check: bool = False) -> Dict[str, str]:
         """
-        Validates input, checks document accessibility, and processes queries in parallel batches.
-        
-        Args:
-            queries: List of questions to ask about the document
-            document_link: URL of the document to query
-            metadata: Additional metadata to store with the query log
-            
-        Returns:
-            Dictionary mapping query numbers to their responses
+        Optimized version of generate_response with caching and performance improvements.
         """
         start_time = time.time()
         metadata = metadata or {}
+        
+        # Check cache first if enabled
+        if use_cache:
+            cache_key = self._get_cache_key(queries, document_link)
+            if cache_key in self._response_cache:
+                cache_time, cached_response = self._response_cache[cache_key]
+                # Cache for 10 minutes
+                if time.time() - cache_time < 600:
+                    logger.info("Returning cached response")
+                    return cached_response
         
         try:
             if not queries:
@@ -260,9 +269,16 @@ class LLMService:
             if not document_link or not self._is_valid_url(document_link):
                 raise ValueError("A valid document link is required")
 
-            is_accessible = await self._is_document_accessible(document_link)
-            if not is_accessible:
-                raise ValueError(f"Document at {document_link} is not accessible or not found")
+            # Optional accessibility check for performance
+            if not skip_accessibility_check:
+                is_accessible = await self._is_document_accessible(document_link, use_cache=True)
+                if not is_accessible:
+                    raise ValueError(f"Document at {document_link} is not accessible or not found")
+            else:
+                is_accessible = True  # Assume accessible when skipping check
+            
+            # Calculate optimal batch size
+            optimal_batch_size = self._calculate_optimal_batch_size(queries)
             
             # Prepare metadata for logging
             query_metadata = {
@@ -270,47 +286,35 @@ class LLMService:
                 "timestamp": datetime.utcnow().isoformat(),
                 "num_queries": len(queries),
                 "document_accessible": is_accessible,
-                "processing_mode": "batched" if len(queries) > MAX_QUERIES_PER_BATCH else "single",
+                "optimal_batch_size": optimal_batch_size,
+                "processing_mode": "batched" if len(queries) > optimal_batch_size else "single",
                 **metadata
             }
             
-            logger.info(f"\n=== PROCESSING {len(queries)} QUERIES ===")
+            logger.info(f"\n=== PROCESSING {len(queries)} QUERIES (Optimized) ===")
             logger.info(f"Document: {document_link}")
+            logger.info(f"Batch size: {optimal_batch_size}")
             
-            # Split queries into batches if needed
-            query_batches = [queries[i:i + MAX_QUERIES_PER_BATCH] 
-                          for i in range(0, len(queries), MAX_QUERIES_PER_BATCH)]
+            # Split queries into optimized batches
+            query_batches = [queries[i:i + optimal_batch_size] 
+                          for i in range(0, len(queries), optimal_batch_size)]
             
-            # Create a list to store batch tasks with their assigned API keys
+            # Create batch tasks with smart API key assignment
             batch_tasks = []
             used_keys = set()
             
-            # Assign a unique API key to each batch
             for batch_num, batch in enumerate(query_batches, 1):
-                # Get an API key that hasn't been used yet, or cycle through if we've used them all
-                available_keys = [k for k in API_KEYS if k not in used_keys]
-                if not available_keys:
-                    # If we've used all keys, clear the set and start over
-                    used_keys.clear()
-                    available_keys = API_KEYS.copy()
-                
-                batch_key = random.choice(available_keys)
+                batch_key = self._get_best_available_key(used_keys)
                 used_keys.add(batch_key)
                 
                 batch_metadata = {
                     **query_metadata,
                     "batch_num": batch_num,
                     "total_batches": len(query_batches),
-                    "api_key_used": f"...{batch_key[-4:]}"  # Log last 4 chars for tracking
+                    "api_key_used": f"...{batch_key[-4:]}"
                 }
                 
-                # Create a task for this batch with its own LLMService instance
-                task = self._process_batch_with_key(
-                    batch, 
-                    document_link, 
-                    batch_metadata, 
-                    batch_key
-                )
+                task = self._process_batch_with_key(batch, document_link, batch_metadata, batch_key)
                 batch_tasks.append(task)
             
             # Process all batches in parallel
@@ -324,9 +328,8 @@ class LLMService:
                 batch = query_batches[batch_idx] if batch_idx < len(query_batches) else []
                 
                 if isinstance(batch_response, dict):
-                    # Add successful batch responses
                     for i in range(len(batch)):
-                        q_num = f"Query {i+1}"  # The original query number within the batch
+                        q_num = f"Query {i+1}"
                         if q_num in batch_response:
                             combined_responses[f"Query {query_counter}"] = batch_response[q_num]
                         else:
@@ -334,43 +337,57 @@ class LLMService:
                                 "I couldn't find a specific answer to this question in the document."
                         query_counter += 1
                 else:
-                    # Handle failed batch with default responses
                     for _ in range(len(batch)):
                         if query_counter <= len(queries):
                             combined_responses[f"Query {query_counter}"] = \
                                 "I couldn't find a specific answer to this question in the document."
                             query_counter += 1
             
+            # Cache the response if enabled
+            if use_cache:
+                self._response_cache[cache_key] = (time.time(), combined_responses)
+                # Limit cache size to prevent memory issues
+                if len(self._response_cache) > 100:
+                    # Remove oldest entries
+                    oldest_key = min(self._response_cache.keys(), 
+                                   key=lambda k: self._response_cache[k][0])
+                    del self._response_cache[oldest_key]
+            
             # Log the successful processing
             try:
+                processing_time = time.time() - start_time
                 log_id = query_logger.log_query(
                     document_link=document_link,
                     queries=queries,
                     responses=combined_responses,
                     metadata={
                         **query_metadata,
-                        "processing_time_seconds": time.time() - start_time,
+                        "processing_time_seconds": processing_time,
                         "num_batches": len(query_batches),
-                        "response_character_count": sum(len(str(r)) for r in combined_responses.values())
+                        "response_character_count": sum(len(str(r)) for r in combined_responses.values()),
+                        "optimizations_used": ["caching", "smart_batching", "connection_pooling", "optimized_prompts"]
                     }
                 )
-                logger.info(f"Successfully processed all queries. Log ID: {log_id}")
+                logger.info(f"Successfully processed all queries in {processing_time:.2f}s. Log ID: {log_id}")
             except Exception as e:
                 logger.error(f"Failed to log query: {str(e)}")
-                logger.error(traceback.format_exc())
             
             return combined_responses
 
         except Exception as e:
-            logger.error(f"\n=== ERROR OCCURRED IN LLM_SERVICE ===")
+            logger.error(f"\n=== ERROR OCCURRED IN OPTIMIZED_LLM_SERVICE ===")
             logger.error(f"Error type: {type(e).__name__}")
             logger.error(f"Error message: {str(e)}")
             logger.error("=== STACK TRACE ===")
             logger.error(traceback.format_exc())
             
-            # Return default responses for all queries
             return {f"Query {i+1}": f"Error processing request: {str(e)}" 
                    for i in range(len(queries))}
 
+    async def cleanup(self):
+        """Cleanup resources when shutting down."""
+        if self._http_client:
+            await self._http_client.aclose()
+
 # Singleton instance for the application
-llm_service = LLMService()
+optimized_llm_service = OptimizedLLMService()
