@@ -1,0 +1,154 @@
+[
+  {
+    "id": "add0c4e0-186c-43dd-b265-2a8ede98cfc2",
+    "timestamp": "2025-08-01T08:59:52.052751",
+    "document_link": "https://hackrx.blob.core.windows.net/assets/policy.pdf?sv=2023-01-03&st=2025-07-04T09%3A11%3A24Z&se=2027-07-05T09%3A11%3A00Z&sr=b&sp=r&sig=N4a9OU0w0QXO6AOIBiu4bpl7AXvEZogeT%2FjUHNO7HzQ%3D",
+    "queries": [
+      "What is the grace period for premium payment under the National Parivar Mediclaim Plus Policy?",
+      "What is the waiting period for pre-existing diseases (PED) to be covered?",
+      "Does this policy cover maternity expenses, and what are the conditions?",
+      "What is the waiting period for cataract surgery?",
+      "Are the medical expenses for an organ donor covered under this policy?",
+      "What is the No Claim Discount (NCD) offered in this policy?",
+      "Is there a benefit for preventive health check-ups?",
+      "How does the policy define a 'Hospital'?",
+      "What is the extent of coverage for AYUSH treatments?",
+      "Are there any sub-limits on room rent and ICU charges for Plan A?"
+    ],
+    "responses": {
+      "Query 1": "A grace period of 30 days from the date of expiry is allowed for renewal of the policy.",
+      "Query 2": "Expenses related to the treatment of a pre-existing disease (PED) are excluded until 36 months of continuous coverage have elapsed from the inception of the first policy.",
+      "Query 3": "No, this policy explicitly excludes expenses related to maternity, including childbirth (Caesarean section) and medical termination of pregnancy.",
+      "Query 4": "The waiting period for cataract surgery is 24 months.",
+      "Query 5": "Yes, expenses for an organ donor's treatment for the harvesting of the organ are covered under this policy.",
+      "Query 6": "The Sum Insured will be increased by 5% for each claim-free year, subject to a maximum of 50% of the Sum Insured. This is referred to as Cumulative Bonus (CB) / No Claim Discount (NCD).",
+      "Query 7": "Yes, the cost of a health check-up will be reimbursed once at the end of a block of every three continuous claim-free policy years.",
+      "Query 8": "A hospital is defined as an institution for in-patient/day care treatment with qualified nursing staff round the clock, at least 10-15 beds (depending on town population), a fully equipped operation theatre, and maintained daily patient records.",
+      "Query 9": "Medical expenses incurred for inpatient treatment under Ayurveda, Yoga and Naturopathy, Unani, Siddha, and Homoeopathy (AYUSH) systems of medicine are covered up to the Sum Insured.",
+      "Query 10": "No, there are no sub-limits on room rent, boarding, nursing expenses, or ICU/ICCU charges for Plan A."
+    },
+    "metadata": {
+      "model": "gemini-2.5-flash",
+      "timestamp": "2025-08-01T08:59:42.732175",
+      "num_queries": 10,
+      "document_accessible": true,
+      "source_ip": "172.17.0.1",
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+      "response_character_count": 1405
+    }
+  },
+  {
+    "id": "98b7b1d0-aecb-4b26-b1f2-ef8867080e80",
+    "timestamp": "2025-08-01T09:02:43.715076",
+    "document_link": "https://hackrx.blob.core.windows.net/assets/policy.pdf?sv=2023-01-03&st=2025-07-04T09%3A11%3A24Z&se=2027-07-05T09%3A11%3A00Z&sr=b&sp=r&sig=N4a9OU0w0QXO6AOIBiu4bpl7AXvEZogeT%2FjUHNO7HzQ%3D",
+    "queries": [
+      "What is the grace period for premium payment under the National Parivar Mediclaim Plus Policy?",
+      "What is the waiting period for pre-existing diseases (PED) to be covered?",
+      "Does this policy cover maternity expenses, and what are the conditions?",
+      "What is the waiting period for cataract surgery?",
+      "Are the medical expenses for an organ donor covered under this policy?",
+      "What is the No Claim Discount (NCD) offered in this policy?",
+      "Is there a benefit for preventive health check-ups?",
+      "How does the policy define a 'Hospital'?",
+      "What is the extent of coverage for AYUSH treatments?",
+      "Are there any sub-limits on room rent and ICU charges for Plan A?"
+    ],
+    "responses": {
+      "Query 1": "The grace period for premium payment is 30 days from the date of expiry of the policy.",
+      "Query 2": "The waiting period for pre-existing diseases (PED) to be covered is 48 months.",
+      "Query 3": "No, expenses related to pregnancy and childbirth are excluded unless specifically covered under a rider or add-on cover.",
+      "Query 4": "The waiting period for cataract surgery is 24 months.",
+      "Query 5": "Yes, medical expenses incurred for the organ donor for harvesting the organ for transplant surgery of the Insured Person are covered, provided the donation is in accordance with the Transplantation of Human Organs Act 1994.",
+      "Query 6": "The policy offers a No Claim Bonus (NCB) of 5% of the Sum Insured for each claim-free year, up to a maximum of 50% of the Sum Insured.",
+      "Query 7": "Yes, a health check-up benefit is provided once every two policy years, irrespective of claim, subject to a maximum of 1% of the average Sum Insured of the preceding two policy years or Rs. 2,500/-, whichever is less.",
+      "Query 8": "A 'Hospital' is defined as an institution in India for in-patient/day care treatment, registered with local authorities, having at least 10 (or 15 in larger towns) in-patient beds, a fully equipped operation theatre, qualified nursing staff, and a qualified doctor(s) round the clock.",
+      "Query 9": "Expenses incurred for inpatient AYUSH treatments (Ayurveda, Yoga and Naturopathy, Unani, Siddha and Homoeopathy) are covered, subject to a maximum of 25% of the Sum Insured.",
+      "Query 10": "For Plan A, the room rent is limited to a Single Private Room, and there is no sub-limit on ICU charges."
+    },
+    "metadata": {
+      "model": "gemini-2.5-flash",
+      "timestamp": "2025-08-01T09:02:32.681932",
+      "num_queries": 10,
+      "document_accessible": true,
+      "source_ip": "172.17.0.1",
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+      "response_character_count": 1472
+    }
+  },
+  {
+    "id": "6ae93614-ffbd-443d-a6e5-d762f0a127c0",
+    "timestamp": "2025-08-01T09:05:03.856234",
+    "document_link": "https://hackrx.blob.core.windows.net/assets/policy.pdf?sv=2023-01-03&st=2025-07-04T09%3A11%3A24Z&se=2027-07-05T09%3A11%3A00Z&sr=b&sp=r&sig=N4a9OU0w0QXO6AOIBiu4bpl7AXvEZogeT%2FjUHNO7HzQ%3D",
+    "queries": [
+      "Who scored the most runs in the 2019 Cricket World Cup?",
+      "Which football club won the UEFA Champions League in 2021?",
+      "What is the difference between Java's ArrayList and LinkedList?",
+      "Who is the current Prime Minister of the United Kingdom?",
+      "Which cricketer is known as the 'God of Cricket'?",
+      "In football, what is the offside rule?",
+      "How does Java's garbage collection mechanism work?",
+      "What is the role of the President in the Indian political system?",
+      "Which country hosted the FIFA World Cup in 2022?",
+      "What is the purpose of the 'synchronized' keyword in Java?"
+    ],
+    "responses": {
+      "Query 1": "The provided document is an insurance policy and does not contain information about the 2019 Cricket World Cup. Rohit Sharma scored the most runs in the 2019 Cricket World Cup.",
+      "Query 2": "The provided document is an insurance policy and does not contain information about football clubs or the UEFA Champions League. Chelsea won the UEFA Champions League in 2021.",
+      "Query 3": "The provided document is an insurance policy and does not contain information about Java programming. ArrayList uses a dynamic array for storage, while LinkedList uses a doubly linked list. ArrayList is better for random access, and LinkedList is better for insertions/deletions in the middle.",
+      "Query 4": "The provided document is an insurance policy and does not contain information about political leaders or the United Kingdom. The current Prime Minister of the United Kingdom is Rishi Sunak.",
+      "Query 5": "The provided document is an insurance policy and does not contain information about cricketers. Sachin Tendulkar is known as the 'God of Cricket'.",
+      "Query 6": "The provided document is an insurance policy and does not contain information about football rules. In football, a player is in an offside position if they are nearer to the opponents' goal line than both the ball and the second-to-last opponent when the ball is played by a teammate.",
+      "Query 7": "The provided document is an insurance policy and does not contain information about Java programming. Java's garbage collection automatically reclaims memory occupied by objects that are no longer referenced by the program, preventing memory leaks and managing heap memory.",
+      "Query 8": "The provided document is an insurance policy and does not contain information about the Indian political system. The President of India is the head of state and the supreme commander of the armed forces, acting largely on the advice of the Prime Minister and Council of Ministers.",
+      "Query 9": "The provided document is an insurance policy and does not contain information about the FIFA World Cup. Qatar hosted the FIFA World Cup in 2022.",
+      "Query 10": "The provided document is an insurance policy and does not contain information about Java programming. The 'synchronized' keyword in Java is used to control access to shared resources by multiple threads, ensuring that only one thread can execute a synchronized block or method at a time, preventing data inconsistency."
+    },
+    "metadata": {
+      "model": "gemini-2.5-flash",
+      "timestamp": "2025-08-01T09:04:55.835810",
+      "num_queries": 10,
+      "document_accessible": true,
+      "source_ip": "172.17.0.1",
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+      "response_character_count": 2278
+    }
+  },
+  {
+    "id": "e5a2818c-3de4-486a-a1e3-00b24a8a3e85",
+    "timestamp": "2025-08-01T09:10:09.473652",
+    "document_link": "https://hackrx.blob.core.windows.net/assets/policy.pdf?sv=2023-01-03&st=2025-07-04T09%3A11%3A24Z&se=2027-07-05T09%3A11%3A00Z&sr=b&sp=r&sig=N4a9OU0w0QXO6AOIBiu4bpl7AXvEZogeT%2FjUHNO7HzQ%3D",
+    "queries": [
+      "What is the grace period for premium payment under the National Parivar Mediclaim Plus Policy?",
+      "What is the waiting period for pre-existing diseases (PED) to be covered?",
+      "Does this policy cover maternity expenses, and what are the conditions?",
+      "What is the waiting period for cataract surgery?",
+      "Are the medical expenses for an organ donor covered under this policy?",
+      "What is the No Claim Discount (NCD) offered in this policy?",
+      "Is there a benefit for preventive health check-ups?",
+      "How does the policy define a 'Hospital'?",
+      "What is the extent of coverage for AYUSH treatments?",
+      "Are there any sub-limits on room rent and ICU charges for Plan A?"
+    ],
+    "responses": {
+      "Query 1": "A grace period of 30 days is allowed for premium payment, but coverage is not available during this period.",
+      "Query 2": "The waiting period for pre-existing diseases (PED) to be covered is 36 months of continuous coverage.",
+      "Query 3": "No, this policy explicitly excludes treatment of infertility, sterility, and any kind of maternity expenses.",
+      "Query 4": "The waiting period for cataract surgery is 24 months from the policy's inception.",
+      "Query 5": "Yes, medical expenses for an organ donor for harvesting the organ are covered, provided the donation complies with The Transplantation of Human Organs Act, 1994, and other applicable laws.",
+      "Query 6": "A No Claim Discount (NCD) of 5% of the Sum Insured is provided for each claim-free year, up to a maximum of 50% of the Sum Insured.",
+      "Query 7": "Yes, expenses for a health check-up are reimbursed up to 1% of the average Sum Insured of the preceding three years, subject to a maximum of Rs. 2,500/- for every block of three claim-free years.",
+      "Query 8": "A 'Hospital' is defined as an institution for in-patient and day care treatment, registered with local authorities, and meeting specific criteria regarding beds, operation theatre, and qualified staff. It excludes places primarily for rest, convalescence, or addiction treatment.",
+      "Query 9": "Expenses for inpatient AYUSH treatments (Ayurveda, Yoga & Naturopathy, Unani, Siddha, Homoeopathy) are covered up to the Sum Insured if taken in a government hospital or a government-recognized/accredited institute.",
+      "Query 10": "Yes, for Plan A, room/boarding/nursing expenses (including ICU) are subject to sub-limits: actual or up to 1% of Sum Insured per day for a normal room, and 2% of Sum Insured per day for ICU, whichever is less."
+    },
+    "metadata": {
+      "model": "gemini-2.5-flash",
+      "timestamp": "2025-08-01T09:09:59.605654",
+      "num_queries": 10,
+      "document_accessible": true,
+      "source_ip": "172.17.0.1",
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+      "response_character_count": 1614
+    }
+  }
+]
