@@ -1,12 +1,13 @@
 import os
 import google.generativeai as genai
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from urllib.parse import urlparse
 import httpx
 import time
 import traceback
 import json
 import random
+import logging
 from datetime import datetime
 from pathlib import Path
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
@@ -17,7 +18,6 @@ from .query_logger import query_logger
 API_KEYS = [
     "AIzaSyD1wpr6HXQzG67TopO5xIThzyQ1rxt85us",
     "AIzaSyAw1xER-y-EpXVgg2DCQr_GLNBS1dlgDGo",
-    "AIzaSyAw1xER-y-EpXVgg2DCQr_GLNBS1dlgDGo",
     "AIzaSyDRafUeLPLv7wxqVrxZeetl5hGJoz39ax0",
     "AIzaSyD2S-t1eQw-eLV-dplK7UR8i40k5oKRVGs",
     "AIzaSyB-9VDWC3-6QGI3wQAie22f2OyIo06zTcg",
@@ -27,16 +27,34 @@ API_KEYS = [
     "AIzaSyCMcQUU-GrklfWQe9qs2pV3sh6dGNIOpE8"
 ]
 
+# Model configuration
+MODEL_NAME = "gemini-2.5-flash"
+MAX_TOKENS = 8192
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('app.log')
+    ]
+)
+logger = logging.getLogger(__name__)
+
 class LLMService:
     def __init__(self):
         """Initializes the LLMService with a random API key from the list."""
         if not API_KEYS:
             raise ValueError("No API keys provided in the API_KEYS list")
             
-        # Select a random API key
+        if not API_KEYS:
+            raise ValueError("No API keys available")
+            
         self.api_key = random.choice(API_KEYS)
-        self.model_name = os.getenv("MODEL_NAME", "gemini-2.5-flash")
-        self.max_tokens = int(os.getenv("MAX_TOKENS", "8192"))
+        self.model_name = MODEL_NAME
+        self.max_tokens = MAX_TOKENS
+        logger.info(f"Initializing LLMService with model: {self.model_name}")
         self._setup_genai()
 
     def _setup_genai(self, used_keys=None):
@@ -59,7 +77,7 @@ class LLMService:
             return True
         except Exception as e:
             error_msg = str(e).lower()
-            print(f"Error with API key {self.api_key[:10]}...: {error_msg}")
+            logger.error(f"Error with API key {self.api_key[:10]}...: {error_msg}")
             
             # Mark this key as used
             used_keys.add(self.api_key)
@@ -68,7 +86,7 @@ class LLMService:
             available_keys = [k for k in API_KEYS if k not in used_keys]
             if available_keys:
                 self.api_key = random.choice(available_keys)
-                print(f"Retrying with API key: {self.api_key[:10]}...")
+                logger.info(f"Retrying with API key: {self.api_key[:10]}...")
                 return self._setup_genai(used_keys)
                 
             # If we get here, no more keys to try
@@ -97,7 +115,7 @@ class LLMService:
             
         except Exception as e:
             error_msg = str(e).lower()
-            print(f"Error calling LLM: {error_msg}")
+            logger.error(f"Error calling LLM: {error_msg}")
             
             # Check if this is a rate limit or quota error
             is_rate_limit = any(keyword in error_msg for keyword in [
@@ -106,14 +124,14 @@ class LLMService:
             ])
             
             if is_rate_limit and retry_count < max_retries:
-                print(f"Rate limit hit. Retrying with a different API key (attempt {retry_count + 1}/{max_retries})...")
+                logger.info(f"Rate limit hit. Retrying with a different API key (attempt {retry_count + 1}/{max_retries})...")
                 # Mark current key as used
                 used_keys.add(self.api_key)
                 # Get a new key
                 available_keys = [k for k in API_KEYS if k not in used_keys]
                 if available_keys:
                     self.api_key = random.choice(available_keys)
-                    print(f"Switching to API key: {self.api_key[:10]}...")
+                    logger.info(f"Switching to API key: {self.api_key[:10]}...")
                     # Re-initialize with new key
                     self._setup_genai(used_keys)
                     # Retry the request
@@ -142,7 +160,7 @@ class LLMService:
     def _prepare_prompt(self, queries: List[str], document_link: str) -> str:
         """Prepares the structured prompt for the LLM."""
         prompt_parts = [
-            "Answer all questions based on the provided insurance policy document. If the answer is in the document, give a clear, concise response in under 1000 characters. If it is not in the document, then provide a brief and general answer."
+            "Answer all questions based on document. If the answer is in the document, give a clear, concise response in under 1000 characters. If it is not in the document, then provide a brief and general answer."
             f"Document Link: {document_link}\n\n",
             "===== QUESTIONS TO ANSWER =====\n"
         ]
