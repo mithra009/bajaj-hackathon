@@ -6,26 +6,121 @@ import httpx
 import time
 import traceback
 import json
+import random
 from datetime import datetime
 from pathlib import Path
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
 from .query_logger import query_logger
 
+# List of API keys
+API_KEYS = [
+    "AIzaSyD1wpr6HXQzG67TopO5xIThzyQ1rxt85us",
+    "AIzaSyAw1xER-y-EpXVgg2DCQr_GLNBS1dlgDGo",
+    "AIzaSyAw1xER-y-EpXVgg2DCQr_GLNBS1dlgDGo",
+    "AIzaSyDRafUeLPLv7wxqVrxZeetl5hGJoz39ax0",
+    "AIzaSyD2S-t1eQw-eLV-dplK7UR8i40k5oKRVGs",
+    "AIzaSyB-9VDWC3-6QGI3wQAie22f2OyIo06zTcg",
+    "AIzaSyDVuQGygWyeo2J40anesm3aWLQK5vmjGeM",
+    "AIzaSyCp1waEadzMh4p1HKmHr7GinZqzgJgFMDM",
+    "AIzaSyDzBLii6fraXMxwFsu9teJ8qPwpPZP33dE",
+    "AIzaSyCMcQUU-GrklfWQe9qs2pV3sh6dGNIOpE8"
+]
+
 class LLMService:
     def __init__(self):
-        """Initializes the LLMService."""
-        self.api_key = os.getenv("GOOGLE_API_KEY")
+        """Initializes the LLMService with a random API key from the list."""
+        if not API_KEYS:
+            raise ValueError("No API keys provided in the API_KEYS list")
+            
+        # Select a random API key
+        self.api_key = random.choice(API_KEYS)
         self.model_name = os.getenv("MODEL_NAME", "gemini-2.5-flash")
         self.max_tokens = int(os.getenv("MAX_TOKENS", "4096"))
         self._setup_genai()
 
-    def _setup_genai(self):
-        """Configures the Gemini API client."""
+    def _setup_genai(self, used_keys=None):
+        """Configures the Gemini API client with the current API key.
+        
+        Args:
+            used_keys: Set of API keys that have already been tried
+        """
+        used_keys = used_keys or set()
+        
         if not self.api_key:
-            raise ValueError("GOOGLE_API_KEY environment variable not set")
-        genai.configure(api_key=self.api_key)
-        self.model = genai.GenerativeModel(self.model_name)
+            available_keys = [k for k in API_KEYS if k not in used_keys]
+            if not available_keys:
+                raise ValueError("No available API keys left to try")
+            self.api_key = random.choice(available_keys)
+            
+        try:
+            genai.configure(api_key=self.api_key)
+            self.model = genai.GenerativeModel(self.model_name)
+            return True
+        except Exception as e:
+            error_msg = str(e).lower()
+            print(f"Error with API key {self.api_key[:10]}...: {error_msg}")
+            
+            # Mark this key as used
+            used_keys.add(self.api_key)
+            
+            # Try a different API key if available
+            available_keys = [k for k in API_KEYS if k not in used_keys]
+            if available_keys:
+                self.api_key = random.choice(available_keys)
+                print(f"Retrying with API key: {self.api_key[:10]}...")
+                return self._setup_genai(used_keys)
+                
+            # If we get here, no more keys to try
+            raise ValueError("All API keys have been exhausted. Please add more keys or try again later.")
+
+    async def _call_llm(self, prompt: str, retry_count: int = 0, used_keys: set = None) -> str:
+        """Calls the LLM with the given prompt and returns the response.
+        
+        Args:
+            prompt: The prompt to send to the LLM
+            retry_count: Number of retry attempts so far
+            used_keys: Set of API keys that have already been tried
+            
+        Returns:
+            The LLM response text
+            
+        Raises:
+            Exception: If all retry attempts fail
+        """
+        used_keys = used_keys or set()
+        max_retries = len(API_KEYS) * 2  # Allow trying each key twice
+        
+        try:
+            response = await self.model.generate_content_async(prompt)
+            return response.text
+            
+        except Exception as e:
+            error_msg = str(e).lower()
+            print(f"Error calling LLM: {error_msg}")
+            
+            # Check if this is a rate limit or quota error
+            is_rate_limit = any(keyword in error_msg for keyword in [
+                "rate limit", "quota", "limit exceeded", 
+                "quota exceeded", "429", "resource exhausted"
+            ])
+            
+            if is_rate_limit and retry_count < max_retries:
+                print(f"Rate limit hit. Retrying with a different API key (attempt {retry_count + 1}/{max_retries})...")
+                # Mark current key as used
+                used_keys.add(self.api_key)
+                # Get a new key
+                available_keys = [k for k in API_KEYS if k not in used_keys]
+                if available_keys:
+                    self.api_key = random.choice(available_keys)
+                    print(f"Switching to API key: {self.api_key[:10]}...")
+                    # Re-initialize with new key
+                    self._setup_genai(used_keys)
+                    # Retry the request
+                    return await self._call_llm(prompt, retry_count + 1, used_keys)
+            
+            # If we get here, either it's not a rate limit error or we've exhausted retries
+            raise
 
     def _is_valid_url(self, url: str) -> bool:
         """Checks if a URL string is well-formed."""
