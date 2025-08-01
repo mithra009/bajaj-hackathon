@@ -1,22 +1,39 @@
+import os
+import time
+import logging
+from pathlib import Path
+from typing import List, Dict, Any, Optional
+from datetime import datetime
+
 from fastapi import FastAPI, HTTPException, Depends, status, Request, Body
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
 import uvicorn
-import time
-import os
-from pathlib import Path
-from datetime import datetime
 
-# Ensure logs directory exists
-logs_dir = Path("logs")
-logs_dir.mkdir(exist_ok=True)
+# Load environment variables
+from dotenv import load_dotenv
+load_dotenv()
+
+# Configure logging
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "info").upper(),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('app.log')
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Ensure logs directory exists with proper permissions
+logs_dir = Path("/app/logs")
+logs_dir.mkdir(exist_ok=True, mode=0o777)
 
 # Security
 security = HTTPBearer()
-API_KEY = "fd53cda9e372cc74319d047c60acdcc06e62e7e5550a92d842c425b82df84e4d"
+API_KEY = os.getenv("API_KEYS", "").split(",")[0]  # Use first API key for authentication
 
 app = FastAPI(
     title="LLM Query API",
@@ -26,7 +43,8 @@ app = FastAPI(
 
 def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """Verify the provided API key"""
-    if credentials.credentials != API_KEY:
+    if not API_KEY or credentials.credentials != API_KEY:
+        logger.warning("Invalid authentication attempt")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication credentials",
@@ -184,4 +202,15 @@ async def health_check():
     }
 
 if __name__ == "__main__":
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", 8000))
+    log_level = os.getenv("LOG_LEVEL", "info").lower()
+    
+    logger.info(f"Starting server on {host}:{port} with log level: {log_level}")
+    uvicorn.run(
+        "app.main:app",
+        host=host,
+        port=port,
+        log_level=log_level,
+        reload=True
+    )

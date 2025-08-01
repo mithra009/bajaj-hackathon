@@ -18,10 +18,16 @@ class QueryLogger:
     
     def _ensure_log_file_exists(self):
         """Ensure the log file exists and has a valid JSON array."""
-        if not self.log_file.exists():
-            self.log_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.log_file, 'w') as f:
-                json.dump([], f)
+        try:
+            self.log_file.parent.mkdir(parents=True, exist_ok=True, mode=0o777)
+            if not self.log_file.exists():
+                with open(self.log_file, 'w') as f:
+                    json.dump([], f)
+                # Set permissions after file creation
+                self.log_file.chmod(0o666)
+        except Exception as e:
+            import sys
+            print(f"Error ensuring log file exists: {e}", file=sys.stderr)
     
     def _read_logs(self) -> List[Dict[str, Any]]:
         """Read and return all logs from the log file."""
@@ -33,8 +39,26 @@ class QueryLogger:
     
     def _write_logs(self, logs: List[Dict[str, Any]]):
         """Write logs to the log file."""
-        with open(self.log_file, 'w') as f:
-            json.dump(logs, f, indent=2)
+        try:
+            # Ensure directory exists and has correct permissions
+            self.log_file.parent.mkdir(parents=True, exist_ok=True, mode=0o777)
+            # Write to a temporary file first, then rename (atomic operation)
+            temp_file = self.log_file.with_suffix('.tmp')
+            with open(temp_file, 'w') as f:
+                json.dump(logs, f, indent=2)
+            # Set permissions and replace the old file
+            temp_file.chmod(0o666)
+            temp_file.replace(self.log_file)
+        except Exception as e:
+            import sys
+            print(f"Error writing logs: {e}", file=sys.stderr)
+            # Try one more time with direct write if atomic replace failed
+            try:
+                with open(self.log_file, 'w') as f:
+                    json.dump(logs, f, indent=2)
+                self.log_file.chmod(0o666)
+            except Exception as e2:
+                print(f"Fallback log write also failed: {e2}", file=sys.stderr)
     
     def log_query(
         self,

@@ -28,17 +28,24 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Create a non-root user and group
-RUN useradd --create-home --shell /bin/bash appuser
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+
+# Create necessary directories with proper permissions
+RUN mkdir -p /app/logs /app/app && \
+    touch /app/logs/app.log /app/logs/query_logs.json && \
+    chown -R appuser:appuser /app && \
+    chmod -R 777 /app/logs && \
+    chmod 666 /app/logs/*
 
 # Copy virtual environment from builder stage
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 ENV PYTHONPATH="/app"
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
 
-# Create app directory and copy application code
-RUN mkdir -p /app/app
-COPY --chown=appuser:appuser app /app/app
-COPY --chown=appuser:appuser requirements.txt /app/
+# Copy application code with proper ownership
+COPY --chown=appuser:appuser . .
 
 # Switch to non-root user
 USER appuser
@@ -47,5 +54,9 @@ WORKDIR /app
 # Expose the port the app runs on
 EXPOSE 8000
 
-# Command to run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:8000/health || exit 1
+
+# Command to run the application with auto-reload in development
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info", "--reload"]

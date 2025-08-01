@@ -150,5 +150,177 @@
       "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
       "response_character_count": 1614
     }
+  },
+  {
+    "id": "54aec889-304f-4de7-802d-d5b70f4acc9d",
+    "timestamp": "2025-08-01T14:57:14.186005",
+    "document_link": "https://hackrx.blob.core.windows.net/assets/policy.pdf?sv=2023-01-03&st=2025-07-04T09%3A11%3A24Z&se=2027-07-05T09%3A11%3A00Z&sr=b&sp=r&sig=N4a9OU0w0QXO6AOIBiu4bpl7AXvEZogeT%2FjUHNO7HzQ%3D",
+    "queries": [
+      "What is the grace period for premium payment under the National Parivar Mediclaim Plus Policy?",
+      "What is the waiting period for pre-existing diseases (PED) to be covered?",
+      "Does this policy cover maternity expenses, and what are the conditions?",
+      "What is the waiting period for cataract surgery?",
+      "Are the medical expenses for an organ donor covered under this policy?",
+      "What is the No Claim Discount (NCD) offered in this policy?",
+      "Is there a benefit for preventive health check-ups?",
+      "How does the policy define a 'Hospital'?",
+      "What is the extent of coverage for AYUSH treatments?",
+      "Are there any sub-limits on room rent and ICU charges for Plan A?"
+    ],
+    "responses": {
+      "Query 1": "A grace period of 30 days is allowed for premium payment for renewal of the policy.",
+      "Query 2": "Expenses for pre-existing diseases are excluded until 48 months of continuous coverage have elapsed.",
+      "Query 3": "Yes, maternity expenses are covered up to specified limits (Rs. 15k normal, Rs. 25k C-section) after a 24-month continuous waiting period. Ectopic pregnancy is covered after 12 months.",
+      "Query 4": "The waiting period for cataract surgery is 24 months of continuous coverage.",
+      "Query 5": "Yes, expenses incurred for an organ donor, excluding the cost of the organ itself, for harvesting the organ are covered if for the insured person.",
+      "Query 6": "A No Claim Discount (NCD) of 5% of the Sum Insured is offered for every claim-free year, up to a maximum of 50% of the Sum Insured.",
+      "Query 7": "Yes, a health check-up benefit is available for every 3 continuous claim-free years. The benefit is 1% of the average Sum Insured of the preceding 3 years, up to Rs. 2,500 per person or Rs. 5,000 per family.",
+      "Query 8": "A 'Hospital' is defined as an institution in India for in-patient/day care treatment, registered with local authorities, meeting specific bed count criteria (10/15 beds based on population), having an operation theatre, qualified nursing staff, and medical practitioners.",
+      "Query 9": "In-patient hospitalization expenses for AYUSH treatments (Ayurveda, Yoga, Naturopathy, Unani, Siddha, Homoeopathy) are covered up to the Sum Insured.",
+      "Query 10": "For Plan A (and other plans), room rent is restricted to 1% of the Sum Insured per day, and ICU expenses are restricted to 2% of the Sum Insured per day. There are no separate sub-limits specific only to Plan A beyond these general policy limits applied to the chosen Sum Insured."
+    },
+    "metadata": {
+      "model": "gemini-2.5-flash",
+      "timestamp": "2025-08-01T14:57:02.366836",
+      "num_queries": 10,
+      "document_accessible": true,
+      "source_ip": "172.17.0.1",
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+      "response_character_count": 1627
+    }
+  },
+  {
+    "id": "2a5202be-4cf6-49f9-a713-2188c354c3dd",
+    "timestamp": "2025-08-01T14:58:05.225345",
+    "document_link": "https://hackrx.blob.core.windows.net/assets/Happy%20Family%20Floater%20-%202024%20OICHLIP25046V062425%201.pdf?sv=2023-01-03&spr=https&st=2025-07-31T17%3A24%3A30Z&se=2026-08-01T17%3A24%3A00Z&sr=b&sp=r&sig=VNMTTQUjdXGYb2F4Di4P0zNvmM2rTBoEHr%2BnkUXIqpQ%3D",
+    "queries": [
+      "While checking the process for submitting a dental claim for a 23-year-old financially dependent daughter (who recently married and changed her surname), also confirm the process for updating her last name in the policy records and provide the company's grievance redressal email.",
+      "For a claim submission involving robotic surgery for a spouse at 'Apollo Care Hospital' (city not specified), what supporting documents are needed, how to confirm if the hospital is a network provider, and can a sibling above 26 continue as a dependent if financially dependent after job loss?",
+      "While inquiring about the maximum cashless hospitalization benefit for accidental trauma for a covered parent-in-law, simultaneously provide the claim notification procedure, and confirm the process to replace a lost ID card for another dependent.",
+      "If you wish to admit your 17-year-old son for psychiatric illness to a hospital outside your city, also request an address update for all family members, and inquire about coverage for OPD dental checkups under Gold and Platinum plans.",
+      "Describe the steps to port a prior individual policy from another insurer for a dependent parent-in-law, list documents needed for a post-hospitalization medicine claim for your child, and provide the toll-free customer service number.",
+      "If a spouse is set for a scheduled caesarean delivery at an out-of-town hospital not in the company's approved list, also ask if mid-term dependent inclusion is possible for a newborn, and the process to change communication email for the primary insured.",
+      "For submitting a claim for prosthetic limb implantation after an accident for a dependent, also check eligibility for claim under other group mediclaim policies if sum insured is exhausted, and provide details for nominating a new legal heir."
+    ],
+    "responses": {
+      "Query 1": "I couldn't find a specific answer to this question in the document.",
+      "Query 2": "I couldn't find a specific answer to this question in the document.",
+      "Query 3": "I couldn't find a specific answer to this question in the document.",
+      "Query 4": "I couldn't find a specific answer to this question in the document.",
+      "Query 5": "I couldn't find a specific answer to this question in the document.",
+      "Query 6": "I couldn't find a specific answer to this question in the document.",
+      "Query 7": "I couldn't find a specific answer to this question in the document."
+    },
+    "metadata": {
+      "model": "gemini-2.5-flash",
+      "timestamp": "2025-08-01T14:57:43.045750",
+      "num_queries": 7,
+      "document_accessible": true,
+      "source_ip": "172.17.0.1",
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+      "response_character_count": 469
+    }
+  },
+  {
+    "id": "211cd6ea-50d0-4274-9912-96f8ac81b9e4",
+    "timestamp": "2025-08-01T15:01:02.991010",
+    "document_link": "https://hackrx.blob.core.windows.net/assets/policy.pdf?sv=2023-01-03&st=2025-07-04T09%3A11%3A24Z&se=2027-07-05T09%3A11%3A00Z&sr=b&sp=r&sig=N4a9OU0w0QXO6AOIBiu4bpl7AXvEZogeT%2FjUHNO7HzQ%3D",
+    "queries": [
+      "What is the grace period for premium payment under the National Parivar Mediclaim Plus Policy?",
+      "What is the waiting period for pre-existing diseases (PED) to be covered?",
+      "Does this policy cover maternity expenses, and what are the conditions?",
+      "What is the waiting period for cataract surgery?",
+      "Are the medical expenses for an organ donor covered under this policy?",
+      "What is the No Claim Discount (NCD) offered in this policy?",
+      "Is there a benefit for preventive health check-ups?",
+      "How does the policy define a 'Hospital'?",
+      "What is the extent of coverage for AYUSH treatments?",
+      "Are there any sub-limits on room rent and ICU charges for Plan A?"
+    ],
+    "responses": {
+      "Query 1": "A grace period of 30 days is allowed for premium payment renewal under the National Parivar Mediclaim Plus Policy.",
+      "Query 2": "The waiting period for pre-existing diseases (PED) to be covered is 36 months of continuous coverage.",
+      "Query 3": "Yes, this policy covers maternity expenses (delivery, including Caesarean section, and lawful medical termination of pregnancy) after a 24-month waiting period. Pre-natal and post-natal expenses are not covered unless they result in hospitalization.",
+      "Query 4": "The waiting period for cataract surgery is 24 months.",
+      "Query 5": "Yes, medical expenses incurred for the organ donor for the harvesting of the organ are covered, up to the sum insured of the recipient. The cost of the organ and screening expenses are not covered.",
+      "Query 6": "The No Claim Discount (NCD) offered is 5% of the Sum Insured for each claim-free year, up to a maximum of 50% of the Sum Insured.",
+      "Query 7": "Yes, there is a benefit for preventive health check-ups. The cost of a health check-up is payable once every three continuous claim-free years, with limits based on the Sum Insured.",
+      "Query 8": "A 'Hospital' is defined as any institution in India established for in-patient care, registered with local authorities, and complying with minimum criteria for infrastructure and services.",
+      "Query 9": "AYUSH treatments are covered for in-patient hospitalization expenses up to the Sum Insured in Government or accredited hospitals.",
+      "Query 10": "No, there are no sub-limits on room rent and ICU charges for Plan A."
+    },
+    "metadata": {
+      "model": "gemini-2.5-flash",
+      "timestamp": "2025-08-01T15:00:53.888638",
+      "num_queries": 10,
+      "document_accessible": true,
+      "source_ip": "172.17.0.1",
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+      "response_character_count": 1409
+    }
+  },
+  {
+    "id": "0cf2e80f-3225-4f20-b525-8a61e32bc411",
+    "timestamp": "2025-08-01T15:01:35.294552",
+    "document_link": "https://hackrx.blob.core.windows.net/assets/Happy%20Family%20Floater%20-%202024%20OICHLIP25046V062425%201.pdf?sv=2023-01-03&spr=https&st=2025-07-31T17%3A24%3A30Z&se=2026-08-01T17%3A24%3A00Z&sr=b&sp=r&sig=VNMTTQUjdXGYb2F4Di4P0zNvmM2rTBoEHr%2BnkUXIqpQ%3D",
+    "queries": [
+      "While checking the process for submitting a dental claim for a 23-year-old financially dependent daughter (who recently married and changed her surname), also confirm the process for updating her last name in the policy records and provide the company's grievance redressal email.",
+      "For a claim submission involving robotic surgery for a spouse at 'Apollo Care Hospital' (city not specified), what supporting documents are needed, how to confirm if the hospital is a network provider, and can a sibling above 26 continue as a dependent if financially dependent after job loss?",
+      "While inquiring about the maximum cashless hospitalization benefit for accidental trauma for a covered parent-in-law, simultaneously provide the claim notification procedure, and confirm the process to replace a lost ID card for another dependent.",
+      "If you wish to admit your 17-year-old son for psychiatric illness to a hospital outside your city, also request an address update for all family members, and inquire about coverage for OPD dental checkups under Gold and Platinum plans.",
+      "Describe the steps to port a prior individual policy from another insurer for a dependent parent-in-law, list documents needed for a post-hospitalization medicine claim for your child, and provide the toll-free customer service number.",
+      "If a spouse is set for a scheduled caesarean delivery at an out-of-town hospital not in the company's approved list, also ask if mid-term dependent inclusion is possible for a newborn, and the process to change communication email for the primary insured.",
+      "For submitting a claim for prosthetic limb implantation after an accident for a dependent, also check eligibility for claim under other group mediclaim policies if sum insured is exhausted, and provide details for nominating a new legal heir."
+    ],
+    "responses": {
+      "Query 1": "The policy covers dependent children up to 25 years if unmarried, so a married daughter is not eligible. Dental treatments are permanently excluded. The document states that changes in insured person's details are carried out as per underwriting policy, but doesn't detail the surname change",
+      "Query 2": "I couldn't find a specific answer to this question in the document.",
+      "Query 3": "I couldn't find a specific answer to this question in the document.",
+      "Query 4": "I couldn't find a specific answer to this question in the document.",
+      "Query 5": "I couldn't find a specific answer to this question in the document.",
+      "Query 6": "I couldn't find a specific answer to this question in the document.",
+      "Query 7": "I couldn't find a specific answer to this question in the document."
+    },
+    "metadata": {
+      "model": "gemini-2.5-flash",
+      "timestamp": "2025-08-01T15:01:13.649178",
+      "num_queries": 7,
+      "document_accessible": true,
+      "source_ip": "172.17.0.1",
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+      "response_character_count": 693
+    }
+  },
+  {
+    "id": "399399cf-9c65-4517-9965-b6d15bc881d7",
+    "timestamp": "2025-08-01T15:42:11.507611",
+    "document_link": "https://hackrx.blob.core.windows.net/assets/Happy%20Family%20Floater%20-%202024%20OICHLIP25046V062425%201.pdf?sv=2023-01-03&spr=https&st=2025-07-31T17%3A24%3A30Z&se=2026-08-01T17%3A24%3A00Z&sr=b&sp=r&sig=VNMTTQUjdXGYb2F4Di4P0zNvmM2rTBoEHr%2BnkUXIqpQ%3D",
+    "queries": [
+      "While checking the process for submitting a dental claim for a 23-year-old financially dependent daughter (who recently married and changed her surname), also confirm the process for updating her last name in the policy records and provide the company's grievance redressal email.",
+      "For a claim submission involving robotic surgery for a spouse at 'Apollo Care Hospital' (city not specified), what supporting documents are needed, how to confirm if the hospital is a network provider, and can a sibling above 26 continue as a dependent if financially dependent after job loss?",
+      "While inquiring about the maximum cashless hospitalization benefit for accidental trauma for a covered parent-in-law, simultaneously provide the claim notification procedure, and confirm the process to replace a lost ID card for another dependent.",
+      "If you wish to admit your 17-year-old son for psychiatric illness to a hospital outside your city, also request an address update for all family members, and inquire about coverage for OPD dental checkups under Gold and Platinum plans.",
+      "Describe the steps to port a prior individual policy from another insurer for a dependent parent-in-law, list documents needed for a post-hospitalization medicine claim for your child, and provide the toll-free customer service number.",
+      "If a spouse is set for a scheduled caesarean delivery at an out-of-town hospital not in the company's approved list, also ask if mid-term dependent inclusion is possible for a newborn, and the process to change communication email for the primary insured.",
+      "For submitting a claim for prosthetic limb implantation after an accident for a dependent, also check eligibility for claim under other group mediclaim policies if sum insured is exhausted, and provide details for nominating a new legal heir."
+    ],
+    "responses": {
+      "Query 1": "OPD Dental Treatment is covered under Platinum Plan only for specified treatments. The document does not detail a specific process for dental claims beyond general claim procedures. To update her last name, communicate in writing to the company with supporting documents; it's effective upon endorsement. The company's grievance redressal email is not provided in the document.",
+      "Query 2": "For claim submission, required documents include a duly filled and signed claim form, original discharge summary, all original bills and receipts, investigation reports, prescriptions, MLC/FIR copy (if applicable), KYC documents (if claim > Rs. 1 Lac), and bank details. To confirm if Apollo Care Hospital is a network provider, refer to the company's website or contact customer care. Siblings are not covered as dependents under this policy.",
+      "Query 3": "The maximum cashless hospitalization benefit for accidental trauma is up to the Sum Insured opted for the policy. For planned hospitalization, intimation must be given 48 hours prior; for emergency, within 24 hours of hospitalization. For reimbursement, intimation is required within 24 hours of hospitalization or before discharge, whichever is earlier. The process to replace a lost ID card is not specified in the document.",
+      "Query 4": "Medical expenses for psychiatric illness are covered up to the Sum Insured. To update the address for all family members, communicate in writing to the company with supporting documents; it's effective upon endorsement. OPD dental checkups are covered under the Platinum Plan only for specified treatments (e.g., Root Canal, Extraction, Fillings, Scaling & Polishing, X-Rays), not general check-ups, and are not covered under the Gold Plan.",
+      "Query 5": "To port a prior individual policy, an application must be submitted at least 45 days prior to the renewal date of the existing policy, subject to IRDAI guidelines and the company's underwriting policy. Documents needed for a post-hospitalization medicine claim include a duly filled claim form, original discharge summary, original bills and receipts for medicines, prescriptions, investigation reports, MLC/FIR (if applicable), KYC documents (if claim > Rs. 1 Lac), and bank details. The toll-free customer service number is 1800-102-4222.",
+      "Query 6": "If a spouse is set for a scheduled caesarean delivery at a non-network hospital, cashless facility will not be available; the claim can be submitted for reimbursement. Yes, a newborn can be included mid-term from day 1 by intimating the company within 30 days of birth and paying a pro-rata premium. To change the communication email, communicate in writing to the company with supporting documents; it's effective upon endorsement.",
+      "Query 7": "Prosthetic limb implantation after an accident is covered under advanced treatments, following the general claim process. Yes, if covered under other group mediclaim policies, claims can be made as per the IRDAI's Contribution Clause. Details for nominating a new legal heir are not specified in the document."
+    },
+    "metadata": {
+      "model": "gemini-2.5-flash",
+      "timestamp": "2025-08-01T15:41:47.661567",
+      "num_queries": 7,
+      "document_accessible": true,
+      "source_ip": "172.17.0.1",
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+      "response_character_count": 2967
+    }
   }
 ]
