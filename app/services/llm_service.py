@@ -197,45 +197,14 @@ class LLMService:
             
         return responses
 
-    async def generate_response(self, queries: List[str], document_link: str, metadata: Dict[str, Any] = None) -> Dict[str, str]:
-        """
-        Validates input, checks document accessibility, calls the LLM, and parses the response.
-        Logs the query and response for future reference.
-        
-        Args:
-            queries: List of questions to ask about the document
-            document_link: URL of the document to query
-            metadata: Additional metadata to store with the query log
-            
-        Returns:
-            Dictionary mapping query numbers to their responses
-        """
+    async def _process_batch(self, queries: List[str], document_link: str, metadata: Dict[str, Any]) -> Dict[str, str]:
+        """Process a single batch of queries (up to MAX_QUERIES_PER_BATCH)."""
         try:
-            if not queries:
-                raise ValueError("At least one query is required")
-            if not document_link or not self._is_valid_url(document_link):
-                raise ValueError("A valid document link is required")
-
-            is_accessible = await self._is_document_accessible(document_link)
-            if not is_accessible:
-                raise ValueError(f"Document at {document_link} is not accessible or not found")
-
             prompt = self._prepare_prompt(queries, document_link)
             
-            # Log the query before processing
-            query_metadata = {
-                "model": self.model_name,
-                "timestamp": datetime.utcnow().isoformat(),
-                "num_queries": len(queries),
-                "document_accessible": is_accessible,
-                **(metadata or {})
-            }
+            # Log the batch processing
+            logger.info(f"Processing batch of {len(queries)} queries")
             
-            print(f"\n=== QUERY LOGGING ===")
-            print(f"Document: {document_link}")
-            print(f"Number of queries: {len(queries)}")
-            print(f"Metadata: {json.dumps(query_metadata, indent=2)}")
-
             response = await self.model.generate_content_async(
                 prompt,
                 generation_config={
@@ -249,38 +218,113 @@ class LLMService:
                     HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
                 }
             )
-
-            # Process the response
-            response_text = response.text
-            responses = self._parse_llm_response(response_text, queries)
             
-            # Log the successful query and response
+            response_text = response.text
+            return self._parse_llm_response(response_text, queries)
+            
+        except Exception as e:
+            logger.error(f"Error processing batch: {str(e)}")
+            # Return default responses for this batch
+            return {f"Query {i+1}": "I couldn't find a specific answer to this question in the document." 
+                    for i in range(len(queries))}
+
+    async def generate_response(self, queries: List[str], document_link: str, metadata: Dict[str, Any] = None) -> Dict[str, str]:
+        """
+        Validates input, checks document accessibility, and processes queries in batches if needed.
+        
+        Args:
+            queries: List of questions to ask about the document
+            document_link: URL of the document to query
+            metadata: Additional metadata to store with the query log
+            
+        Returns:
+            Dictionary mapping query numbers to their responses
+        """
+        start_time = time.time()
+        metadata = metadata or {}
+        
+        try:
+            if not queries:
+                raise ValueError("At least one query is required")
+            if not document_link or not self._is_valid_url(document_link):
+                raise ValueError("A valid document link is required")
+
+            is_accessible = await self._is_document_accessible(document_link)
+            if not is_accessible:
+                raise ValueError(f"Document at {document_link} is not accessible or not found")
+            
+            # Prepare metadata for logging
+            query_metadata = {
+                "model": self.model_name,
+                "timestamp": datetime.utcnow().isoformat(),
+                "num_queries": len(queries),
+                "document_accessible": is_accessible,
+                "processing_mode": "batched" if len(queries) > MAX_QUERIES_PER_BATCH else "single",
+                **metadata
+            }
+            
+            logger.info(f"\n=== PROCESSING {len(queries)} QUERIES ===")
+            logger.info(f"Document: {document_link}")
+            
+            # Split queries into batches if needed
+            query_batches = [queries[i:i + MAX_QUERIES_PER_BATCH] 
+                           for i in range(0, len(queries), MAX_QUERIES_PER_BATCH)]
+            
+            # Process batches concurrently
+            tasks = [self._process_batch(batch, document_link, {
+                **query_metadata,
+                "batch_num": i + 1,
+                "total_batches": len(query_batches)
+            }) for i, batch in enumerate(query_batches)]
+            
+            batch_responses = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Combine responses from all batches
+            combined_responses = {}
+            query_counter = 1
+            for batch in batch_responses:
+                if isinstance(batch, dict):
+                    for q_num, answer in batch.items():
+                        combined_responses[f"Query {query_counter}"] = answer
+                        query_counter += 1
+                else:
+                    # Handle failed batches with default responses
+                    for _ in range(MAX_QUERIES_PER_BATCH):
+                        if query_counter <= len(queries):
+                            combined_responses[f"Query {query_counter}"] = \
+                                "I couldn't find a specific answer to this question in the document."
+                            query_counter += 1
+            
+            # Log the successful processing
             try:
                 log_id = query_logger.log_query(
                     document_link=document_link,
                     queries=queries,
-                    responses=responses,
+                    responses=combined_responses,
                     metadata={
                         **query_metadata,
-                        "response_character_count": sum(len(str(r)) for r in responses.values())
+                        "processing_time_seconds": time.time() - start_time,
+                        "num_batches": len(query_batches),
+                        "response_character_count": sum(len(str(r)) for r in combined_responses.values())
                     }
                 )
-                print(f"Query logged successfully with ID: {log_id}")
+                logger.info(f"Successfully processed all queries. Log ID: {log_id}")
             except Exception as e:
-                print(f"Warning: Failed to log query: {str(e)}")
-                import traceback
-                traceback.print_exc()
+                logger.error(f"Failed to log query: {str(e)}")
+                logger.error(traceback.format_exc())
             
-            return responses
+            return combined_responses
 
         except Exception as e:
-            print(f"\n=== ERROR OCCURRED IN LLM_SERVICE ===")
-            print(f"Error type: {type(e).__name__}")
-            print(f"Error message: {str(e)}")
-            print("=== STACK TRACE ===")
-            traceback.print_exc()
-            print("=== END OF ERROR ===")
-            raise
+            logger.error(f"\n=== ERROR OCCURRED IN LLM_SERVICE ===")
+            logger.error(f"Error type: {type(e).__name__}")
+            logger.error(f"Error message: {str(e)}")
+            logger.error("=== STACK TRACE ===")
+            logger.error(traceback.format_exc())
+            
+            # Return default responses for all queries
+            return {f"Query {i+1}": f"Error processing request: {str(e)}" 
+                   for i in range(len(queries))}
 
 # Singleton instance for the application
 llm_service = LLMService()
