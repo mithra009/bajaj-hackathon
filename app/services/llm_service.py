@@ -197,15 +197,21 @@ class LLMService:
             
         return responses
 
-    async def _process_batch(self, queries: List[str], document_link: str, metadata: Dict[str, Any]) -> Dict[str, str]:
-        """Process a single batch of queries (up to MAX_QUERIES_PER_BATCH)."""
+    async def _process_batch_with_key(self, queries: List[str], document_link: str, metadata: Dict[str, Any], api_key: str) -> Dict[str, str]:
+        """Process a batch of queries with a specific API key."""
         try:
-            prompt = self._prepare_prompt(queries, document_link)
+            # Create a new instance with the specified API key
+            temp_service = LLMService()
+            temp_service.api_key = api_key
+            temp_service._setup_genai()
             
-            # Log the batch processing
-            logger.info(f"Processing batch of {len(queries)} queries")
+            # Process all queries in this batch in one go
+            prompt = temp_service._prepare_prompt(queries, document_link)
             
-            response = await self.model.generate_content_async(
+            logger.info(f"Processing batch {metadata.get('batch_num', '?')}/{metadata.get('total_batches', '?')} "
+                      f"with {len(queries)} queries using API key ...{api_key[-4:]}")
+            
+            response = await temp_service.model.generate_content_async(
                 prompt,
                 generation_config={
                     "max_output_tokens": self.max_tokens,
@@ -227,10 +233,15 @@ class LLMService:
             # Return default responses for this batch
             return {f"Query {i+1}": "I couldn't find a specific answer to this question in the document." 
                     for i in range(len(queries))}
+    
+    async def _process_batch(self, queries: List[str], document_link: str, metadata: Dict[str, Any]) -> Dict[str, str]:
+        """Process a single batch of queries (up to MAX_QUERIES_PER_BATCH)."""
+        # Use the current API key for this batch
+        return await self._process_batch_with_key(queries, document_link, metadata, self.api_key)
 
     async def generate_response(self, queries: List[str], document_link: str, metadata: Dict[str, Any] = None) -> Dict[str, str]:
         """
-        Validates input, checks document accessibility, and processes queries in batches if needed.
+        Validates input, checks document accessibility, and processes queries in parallel batches.
         
         Args:
             queries: List of questions to ask about the document
