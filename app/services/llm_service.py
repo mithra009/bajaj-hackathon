@@ -29,7 +29,7 @@ API_KEYS = [
 
 # Model configuration
 MODEL_NAME = "gemini-2.5-flash"
-MAX_TOKENS = 8192
+MAX_TOKENS = 16386  # Increased from 8192 to handle larger documents
 
 # Configure logging
 logging.basicConfig(
@@ -240,7 +240,7 @@ class LLMService:
                 prompt,
                 generation_config={
                     "max_output_tokens": self.max_tokens,
-                    "temperature": 0.7
+                    "temperature": 0.1
                 },
                 safety_settings={
                     HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
