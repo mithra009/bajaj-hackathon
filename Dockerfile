@@ -33,15 +33,19 @@ RUN useradd --create-home --shell /bin/bash appuser
 # Copy virtual environment from builder stage
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
+ENV PYTHONPATH="/app"
 
-# Copy application code
-COPY --chown=appuser:appuser . .
+# Create app directory and copy application code
+RUN mkdir -p /app/app
+COPY --chown=appuser:appuser app /app/app
+COPY --chown=appuser:appuser requirements.txt /app/
 
 # Switch to non-root user
 USER appuser
+WORKDIR /app
 
 # Expose the port the app runs on
 EXPOSE 8000
 
 # Command to run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
