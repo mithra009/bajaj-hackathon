@@ -166,15 +166,28 @@ class OptimizedLLMService:
             return False
 
     def _prepare_optimized_prompt(self, queries: List[str], document_link: str) -> str:
-        """Prepares an optimized, more concise prompt for faster processing."""
+        """Prepares an optimized prompt for processing PDF documents."""
         prompt_parts = [
-            f"Document: {document_link}\n\n",
-            "Answer each question concisely (<500 chars each) based on the document. If not in document, give brief general answer.\n",
-            "Format: Answer N: [response]\n\n"
+            "You are an expert in analyzing and answering questions about PDF documents. "
+            "You will be provided with a PDF document and a set of questions about its content.\n\n"
+            f"DOCUMENT: {document_link}\n"
+            "INSTRUCTIONS:\n"
+            "1. Analyze the provided PDF document carefully\n"
+            "2. For each question, provide a clear and concise answer based on the document content\n"
+            "3. If the answer is not found in the document, provide a brief general answer based on your knowledge\n"
+            "4. Keep answers under 500 characters each\n\n"
+            "QUESTIONS:\n"
         ]
         
+        # Add questions with clear numbering
         for i, query in enumerate(queries, 1):
             prompt_parts.append(f"{i}. {query}\n")
+            
+        prompt_parts.append("\nFORMAT YOUR RESPONSE EXACTLY AS FOLLOWS:\n")
+        
+        # Add expected response format
+        for i in range(1, len(queries) + 1):
+            prompt_parts.append(f"Answer {i}: [Your answer here]\n")
             
         return "".join(prompt_parts)
 
