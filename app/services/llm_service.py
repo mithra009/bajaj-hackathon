@@ -3,18 +3,18 @@ import google.generativeai as genai
 from typing import List, Dict, Any, Optional
 from urllib.parse import urlparse
 import httpx
-import time
 import traceback
 import json
 import random
 import logging
 from datetime import datetime
-from pathlib import Path
+
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
 from .query_logger import query_logger
 
-# List of Google Gemini API keys
+# Hardcoded list of Google Gemini API keys
+# The service will use one of these keys to communicate with the Gemini API.
 API_KEYS = [
     "AIzaSyD1wpr6HXQzG67TopO5xIThzyQ1rxt85us",
     "AIzaSyAw1xER-y-EpXVgg2DCQr_GLNBS1dlgDGo",
@@ -32,25 +32,14 @@ MODEL_NAME = "gemini-2.5-flash"
 MAX_TOKENS = 8192
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('app.log')
-    ]
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class LLMService:
     def __init__(self):
-        """Initializes the LLMService with a random API key from the list."""
+        """Initializes the LLMService with a random API key from the hardcoded list."""
         if not API_KEYS:
-            raise ValueError("No API keys provided in the API_KEYS list")
-            
-        # Select a random API key
-        if not API_KEYS:
-            raise ValueError("No API keys available")
+            raise ValueError("The hardcoded API_KEYS list is empty.")
             
         self.api_key = random.choice(API_KEYS)
         self.model_name = MODEL_NAME
@@ -59,87 +48,23 @@ class LLMService:
         self._setup_genai()
 
     def _setup_genai(self, used_keys=None):
-        """Configures the Gemini API client with the current API key.
-        
-        Args:
-            used_keys: Set of API keys that have already been tried
-        """
+        """Configures the Gemini API client, rotating keys if necessary."""
         used_keys = used_keys or set()
         
-        if not self.api_key:
-            available_keys = [k for k in API_KEYS if k not in used_keys]
-            if not available_keys:
-                raise ValueError("No available API keys left to try")
-            self.api_key = random.choice(available_keys)
-            
         try:
             genai.configure(api_key=self.api_key)
             self.model = genai.GenerativeModel(self.model_name)
-            return True
         except Exception as e:
-            error_msg = str(e).lower()
-            print(f"Error with API key {self.api_key[:10]}...: {error_msg}")
-            
-            # Mark this key as used
+            logger.error(f"Error with API key ...{self.api_key[-4:]}: {e}")
             used_keys.add(self.api_key)
             
-            # Try a different API key if available
             available_keys = [k for k in API_KEYS if k not in used_keys]
-            if available_keys:
-                self.api_key = random.choice(available_keys)
-                print(f"Retrying with API key: {self.api_key[:10]}...")
-                return self._setup_genai(used_keys)
-                
-            # If we get here, no more keys to try
-            raise ValueError("All API keys have been exhausted. Please add more keys or try again later.")
-
-    async def _call_llm(self, prompt: str, retry_count: int = 0, used_keys: set = None) -> str:
-        """Calls the LLM with the given prompt and returns the response.
-        
-        Args:
-            prompt: The prompt to send to the LLM
-            retry_count: Number of retry attempts so far
-            used_keys: Set of API keys that have already been tried
+            if not available_keys:
+                raise ValueError("All hardcoded API keys have failed.")
             
-        Returns:
-            The LLM response text
-            
-        Raises:
-            Exception: If all retry attempts fail
-        """
-        used_keys = used_keys or set()
-        max_retries = len(API_KEYS) * 2  # Allow trying each key twice
-        
-        try:
-            response = await self.model.generate_content_async(prompt)
-            return response.text
-            
-        except Exception as e:
-            error_msg = str(e).lower()
-            print(f"Error calling LLM: {error_msg}")
-            
-            # Check if this is a rate limit or quota error
-            is_rate_limit = any(keyword in error_msg for keyword in [
-                "rate limit", "quota", "limit exceeded", 
-                "quota exceeded", "429", "resource exhausted"
-            ])
-            
-            if is_rate_limit and retry_count < max_retries:
-                print(f"Rate limit hit. Retrying with a different API key (attempt {retry_count + 1}/{max_retries})...")
-                # Mark current key as used
-                used_keys.add(self.api_key)
-                # Get a new key
-                available_keys = [k for k in API_KEYS if k not in used_keys]
-                if available_keys:
-                    self.api_key = random.choice(available_keys)
-                    print(f"Switching to API key: {self.api_key[:10]}...")
-                    # Re-initialize with new key
-                    self._setup_genai(used_keys)
-                    # Retry the request
-                    return await self._call_llm(prompt, retry_count + 1, used_keys)
-            
-            # If we get here, either it's not a rate limit error or we've exhausted retries
-            raise
+            self.api_key = random.choice(available_keys)
+            logger.info(f"Retrying with a new API key: ...{self.api_key[-4:]}")
+            self._setup_genai(used_keys)
 
     def _is_valid_url(self, url: str) -> bool:
         """Checks if a URL string is well-formed."""
@@ -155,13 +80,14 @@ class LLMService:
             async with httpx.AsyncClient() as client:
                 response = await client.head(url, timeout=10, follow_redirects=True)
                 return response.status_code == 200
-        except httpx.RequestError:
+        except httpx.RequestError as e:
+            logger.warning(f"Document at {url} is not accessible. Error: {e}")
             return False
 
     def _prepare_prompt(self, queries: List[str], document_link: str) -> str:
         """Prepares the structured prompt for the LLM."""
         prompt_parts = [
-            "Answer all questions based on document. If the answer is in the document, give a clear, concise response in under 1000 characters. If it is not in the document, then provide a brief and general answer."
+            "Answer all questions based on the document provided at the link. If the answer is in the document, provide a clear, concise response. If it is not in the document, state that the information is not available in the document.",
             f"Document Link: {document_link}\n\n",
             "===== QUESTIONS TO ANSWER =====\n"
         ]
@@ -169,74 +95,45 @@ class LLMService:
             prompt_parts.append(f"{i}. {query}\n")
         
         prompt_parts.append("\n===== YOUR RESPONSES =====\n")
-        prompt_parts.append("Please provide your responses in the following format for each question:\n")
+        prompt_parts.append("Provide your responses in the following format, with each answer on a new line:\n")
         
         for i in range(1, len(queries) + 1):
             prompt_parts.append(f"Answer {i}: [Your answer to question {i}]\n")
             
         return "".join(prompt_parts)
 
-    def _parse_llm_response(self, response_text: str, queries: List[str]) -> Dict[str, str]:
+    def _parse_llm_response(self, response_text: str, num_queries: int) -> Dict[str, str]:
         """Parses the raw text response from the LLM into a structured dictionary."""
         responses = {}
         lines = [line.strip() for line in response_text.split('\n') if line.strip()]
         
-        for i, query in enumerate(queries, 1):
-            query_num = i
-            answer_prefix = f"Answer {query_num}:"
-            found_answer = "I couldn't find a specific answer to this question in the document."
+        for i in range(1, num_queries + 1):
+            answer_prefix = f"Answer {i}:"
+            found_answer = "The model did not provide a specific answer for this question."
             
             for line in lines:
                 if line.startswith(answer_prefix):
                     found_answer = line[len(answer_prefix):].strip()
-                    # Clean up quotes if they wrap the entire answer
-                    if (found_answer.startswith('"') and found_answer.endswith('"')) or \
-                       (found_answer.startswith("'") and found_answer.endswith("'")):
-                        found_answer = found_answer[1:-1]
                     break
-            responses[f"Query {query_num}"] = found_answer
+            responses[f"Query {i}"] = found_answer
             
         return responses
 
     async def generate_response(self, queries: List[str], document_link: str, metadata: Dict[str, Any] = None) -> Dict[str, str]:
         """
-        Validates input, checks document accessibility, calls the LLM, and parses the response.
-        Logs the query and response for future reference.
-        
-        Args:
-            queries: List of questions to ask about the document
-            document_link: URL of the document to query
-            metadata: Additional metadata to store with the query log
-            
-        Returns:
-            Dictionary mapping query numbers to their responses
+        Main function to generate a response from the LLM.
         """
+        if not queries:
+            raise ValueError("At least one query is required")
+        if not document_link or not self._is_valid_url(document_link):
+            raise ValueError("A valid document link is required")
+
+        if not await self._is_document_accessible(document_link):
+            raise ValueError(f"Document at {document_link} is not accessible or not found.")
+
+        prompt = self._prepare_prompt(queries, document_link)
+        
         try:
-            if not queries:
-                raise ValueError("At least one query is required")
-            if not document_link or not self._is_valid_url(document_link):
-                raise ValueError("A valid document link is required")
-
-            is_accessible = await self._is_document_accessible(document_link)
-            if not is_accessible:
-                raise ValueError(f"Document at {document_link} is not accessible or not found")
-
-            prompt = self._prepare_prompt(queries, document_link)
-            
-            # Log the query before processing
-            query_metadata = {
-                "model": self.model_name,
-                "timestamp": datetime.utcnow().isoformat(),
-                "num_queries": len(queries),
-                "document_accessible": is_accessible,
-                **(metadata or {})
-            }
-            
-            print(f"\n=== QUERY LOGGING ===")
-            print(f"Document: {document_link}")
-            print(f"Number of queries: {len(queries)}")
-            print(f"Metadata: {json.dumps(query_metadata, indent=2)}")
-
             response = await self.model.generate_content_async(
                 prompt,
                 generation_config={
@@ -250,38 +147,27 @@ class LLMService:
                     HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
                 }
             )
-
-            # Process the response
             response_text = response.text
-            responses = self._parse_llm_response(response_text, queries)
+            responses = self._parse_llm_response(response_text, len(queries))
             
-            # Log the successful query and response
-            try:
-                log_id = query_logger.log_query(
-                    document_link=document_link,
-                    queries=queries,
-                    responses=responses,
-                    metadata={
-                        **query_metadata,
-                        "response_character_count": sum(len(str(r)) for r in responses.values())
-                    }
-                )
-                print(f"Query logged successfully with ID: {log_id}")
-            except Exception as e:
-                print(f"Warning: Failed to log query: {str(e)}")
-                import traceback
-                traceback.print_exc()
+            query_metadata = {
+                "model": self.model_name,
+                "api_key_used": f"...{self.api_key[-4:]}",
+                **(metadata or {})
+            }
+            
+            log_id = query_logger.log_query(
+                document_link=document_link,
+                queries=queries,
+                responses=responses,
+                metadata=query_metadata
+            )
+            responses["log_id"] = log_id
             
             return responses
 
         except Exception as e:
-            print(f"\n=== ERROR OCCURRED IN LLM_SERVICE ===")
-            print(f"Error type: {type(e).__name__}")
-            print(f"Error message: {str(e)}")
-            print("=== STACK TRACE ===")
-            traceback.print_exc()
-            print("=== END OF ERROR ===")
+            logger.error(f"Error during LLM response generation: {e}", exc_info=True)
             raise
 
-# Singleton instance for the application
 llm_service = LLMService()
