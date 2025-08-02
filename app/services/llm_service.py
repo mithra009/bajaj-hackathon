@@ -160,7 +160,7 @@ class LLMService:
     def _prepare_prompt(self, queries: List[str], document_link: str) -> str:
         """Prepares the structured prompt for the LLM."""
         prompt_parts = [
-            "Answer all questions in context with the document. If the answer is in the document, give a clear, concise response in under 1000 characters. If it is not in the document, then provide a brief and general answer."
+            "Answer all questions. If the answer is in the document, give a clear, concise response in under 1000 characters. If it is not in the document, then provide a brief and general answer. Do not mention that the document does not contain relevant content."
             f"Document Link: {document_link}\n\n",
             "===== QUESTIONS TO ANSWER =====\n"
         ]
