@@ -62,40 +62,74 @@ class LLMService:
         logger.info(f"Initializing LLMService with model: {self.model_name}")
         self._setup_genai()
         
-    async def _download_pdf(self, url: str) -> Optional[bytes]:
-        """Download PDF from URL asynchronously."""
+    async def _download_pdf(self, url: str) -> Optional[Tuple[bytes, str]]:
+        """Download PDF from URL asynchronously.
+        
+        Returns:
+            Tuple of (content, content_type) if successful, None otherwise
+        """
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                # First, make a HEAD request to check content type
+                head_resp = await client.head(url)
+                head_resp.raise_for_status()
+                
+                content_type = head_resp.headers.get('content-type', '').lower()
+                if 'pdf' not in content_type and not url.lower().endswith('.pdf'):
+                    logger.warning(f"URL {url} does not appear to be a PDF (Content-Type: {content_type})")
+                    return None
+                
+                # If it looks like a PDF, download the full content
                 response = await client.get(url)
                 response.raise_for_status()
-                return response.content
+                return response.content, content_type
         except Exception as e:
-            logger.error(f"Error downloading PDF from {url}: {str(e)}")
+            logger.error(f"Error downloading from {url}: {str(e)}")
             return None
     
     def _extract_text_from_pdf(self, pdf_data: bytes) -> str:
         """Extract text from PDF data using PyMuPDF."""
         try:
             text = []
-            with fitz.open(stream=pdf_data, filetype="pdf") as doc:
-                for page in doc:
-                    text.append(page.get_text())
-            return "\n".join(text)
+            # First try opening as PDF
+            try:
+                with fitz.open(stream=pdf_data, filetype="pdf") as doc:
+                    for page in doc:
+                        text.append(page.get_text())
+                return "\n".join(text)
+            except Exception as pdf_err:
+                logger.warning(f"Failed to process as PDF, trying as generic document: {str(pdf_err)}")
+                # Try as a generic document
+                with fitz.open(stream=pdf_data, filetype="pdf") as doc:
+                    for page in doc:
+                        text.append(page.get_text())
+                return "\n".join(text)
         except Exception as e:
-            logger.error(f"Error extracting text from PDF: {str(e)}")
+            logger.error(f"Error extracting text from document: {str(e)}")
+            logger.error(traceback.format_exc())
             return ""
     
     async def get_document_text(self, document_link: str) -> Tuple[bool, str]:
-        """Download PDF and extract text."""
+        """Download document and extract text.
+        
+        Args:
+            document_link: URL of the document to process
+            
+        Returns:
+            Tuple of (success: bool, text_or_error: str)
+        """
         if not self._is_valid_url(document_link):
             return False, "Invalid document URL"
             
-        if not document_link.lower().endswith('.pdf'):
-            return False, "Only PDF documents are supported"
-            
-        pdf_data = await self._download_pdf(document_link)
-        if not pdf_data:
+        logger.info(f"Downloading document from: {document_link}")
+        result = await self._download_pdf(document_link)
+        if not result:
             return False, "Failed to download document"
+            
+        pdf_data, content_type = result
+        
+        # Log the content type for debugging
+        logger.info(f"Downloaded document with Content-Type: {content_type}")
             
         # Run text extraction in a thread pool to avoid blocking
         loop = asyncio.get_event_loop()
