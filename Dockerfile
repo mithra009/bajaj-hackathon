@@ -18,7 +18,7 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 # Install Python dependencies in two steps to optimize caching
 COPY requirements.txt .
-RUN --mount=type=cache,target=/root/.cache/pip,id=pip-cache \
+RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
     pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
