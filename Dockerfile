@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfreetype6 \
     liblcms2-2 \
     libopenjp2-7 \
-    libtiff5 \
+    libtiff6 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
