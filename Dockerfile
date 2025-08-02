@@ -9,6 +9,18 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     python3-dev \
+    libjpeg-dev \
+    zlib1g-dev \
+    libfreetype6-dev \
+    liblcms2-dev \
+    libopenjp2-7 \
+    libtiff5 \
+    libxcb1 \
+    libxcb1-dev \
+    libx11-6 \
+    libx11-xcb1 \
+    libxext6 \
+    libxrender1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create and activate virtual environment
@@ -18,7 +30,9 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Install Python dependencies
 COPY requirements.txt .
 RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r requirements.txt && \
+    # Clean up pip cache to reduce image size
+    rm -rf /root/.cache/pip/*
 
 # =================
 #  Runtime Stage
@@ -26,6 +40,21 @@ RUN pip install --upgrade pip && \
 FROM python:3.11-slim
 
 WORKDIR /app
+
+# Install runtime system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libjpeg62-turbo \
+    zlib1g \
+    libfreetype6 \
+    liblcms2-2 \
+    libopenjp2-7 \
+    libtiff5 \
+    libxcb1 \
+    libx11-6 \
+    libx11-xcb1 \
+    libxext6 \
+    libxrender1 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user and group
 RUN useradd --create-home --shell /bin/bash appuser
