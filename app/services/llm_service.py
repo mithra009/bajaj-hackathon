@@ -61,7 +61,7 @@ class LLMService:
         logger.info(f"Initializing LLMService with model: {self.model_name}")
         self._setup_genai()
         
-    async def _download_and_extract_text(self, url: str) -> str:
+    def _download_and_extract_text(self, url: str) -> str:
         """Download PDF and extract text synchronously in a thread."""
         try:
             # Use requests to download the PDF
@@ -117,7 +117,7 @@ class LLMService:
             logger.error(error_msg)
             logger.error(traceback.format_exc())
             return False, error_msg
-        
+    
 
 
     def _setup_genai(self, used_keys=None):
@@ -211,7 +211,7 @@ class LLMService:
         except ValueError:
             return False
 
-    async def _is_document_accessible(self, url: str) -> bool:
+    def _is_document_accessible(self, url: str) -> bool:
         """Checks if a document is accessible via an HTTP HEAD request."""
         try:
             response = requests.head(url, timeout=10, allow_redirects=True)
@@ -221,12 +221,7 @@ class LLMService:
 
     def _prepare_prompt(self, queries: List[str], document_text: str) -> str:
         """Prepares the structured prompt for the LLM with extracted document text."""
-        # Truncate document text to avoid exceeding token limits
-        # Keep first 2000 and last 1000 characters to maintain context
-        if len(document_text) > 3000:
-            doc_preview = f"{document_text[:2000]}\n...\n{document_text[-1000:]}"
-        else:
-            doc_preview = document_text
+        doc_preview = document_text
             
         prompt_parts = [
             "DOCUMENT CONTEXT (partial):\n",
@@ -286,7 +281,7 @@ class LLMService:
             prompt = temp_service._prepare_prompt(queries, document_text)
             
             logger.info(f"Processing batch {metadata.get('batch_num', '?')}/{metadata.get('total_batches', '?')} "
-                      f"with {len(queries)} queries using API key ...{api_key[-4:]}")
+                        f"with {len(queries)} queries using API key ...{api_key[-4:]}")
             
             response = await temp_service.model.generate_content_async(
                 prompt,
@@ -334,6 +329,15 @@ class LLMService:
         try:
             if not queries:
                 raise ValueError("At least one query is required")
+            
+            # --- START FIX ---
+            # Run the synchronous accessibility check in a thread to avoid blocking.
+            loop = asyncio.get_event_loop()
+            is_accessible = await loop.run_in_executor(
+                self.executor,
+                lambda: self._is_document_accessible(document_link)
+            )
+            # --- END FIX ---
                 
             # Download and extract text from PDF
             success, document_text = await self.get_document_text(document_link)
@@ -347,7 +351,7 @@ class LLMService:
                 "model": self.model_name,
                 "timestamp": datetime.utcnow().isoformat(),
                 "num_queries": len(queries),
-                "document_accessible": is_accessible,
+                "document_accessible": is_accessible, # The variable is now defined
                 "processing_mode": "batched" if len(queries) > MAX_QUERIES_PER_BATCH else "single",
                 **metadata
             }
@@ -357,7 +361,7 @@ class LLMService:
             
             # Split queries into batches if needed
             query_batches = [queries[i:i + MAX_QUERIES_PER_BATCH] 
-                          for i in range(0, len(queries), MAX_QUERIES_PER_BATCH)]
+                             for i in range(0, len(queries), MAX_QUERIES_PER_BATCH)]
             
             # Create a list to store batch tasks with their assigned API keys
             batch_tasks = []
