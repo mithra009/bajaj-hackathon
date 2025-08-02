@@ -29,7 +29,6 @@ API_KEYS = [
     "AIzaSyB7RJZSsvjK2bPXPQBm683DdoXhUFNgQiI",
     "AIzaSyCSbnkVBRFTLOpNZMP7R55OTLwhLLggQfk",
     "AIzaSyBiKM-oux_CFUS3N6OINzFDTSLV43oyyYM"
-   
 ]
 
 # Import configuration
@@ -244,52 +243,68 @@ class LLMService:
         return (len(text) + 3) // 4
 
     def _prepare_prompt(self, queries: List[str], document_text: str) -> Tuple[str, int]:
-        """Prepares the structured prompt for the LLM with extracted document text."""
-        queries_text = "\n".join([f"{i+1}. {q}" for i, q in enumerate(queries)])
+        """Prepares the structured prompt for the LLM with extracted document text.
         
-        prompt_template = (
-            "You are a helpful AI assistant. Based on the document context provided below, "
-            "answer the following questions within 1500 characters. Your response should follow the format 'Answer N: [Your answer]'. "
-            "If the answer cannot be found in the document, respond from your own knowledge generally.'\n\n"
-            "--- DOCUMENT CONTEXT BEGIN ---\n"
-            f"{document_text}\n"
-            "--- DOCUMENT CONTEXT END ---\n\n"
-            "--- QUESTIONS ---\n"
-            f"{queries_text}\n\n"
-            "--- ANSWERS ---\n"
+        Returns:
+            Tuple of (prompt_text, total_tokens)
+        """
+        # Count tokens for document text
+        doc_tokens = self._count_tokens(document_text)
+        
+        # Prepare base prompt parts
+        base_prompt = (
+            "You are a helpful AI assistant that answers questions based on the provided document context.\n"
+            "Answer the following questions based on the document content below.\n"
+            "If the answer cannot be found in the document, respond with 'The document does not provide specific details on this matter.'\n\n"
+            "QUESTIONS TO ANSWER:\n"
+            "DOCUMENT CONTEXT:\n"
+            "----------------------------------------\n"
         )
-
-        total_tokens = self._count_tokens(prompt_template)
-        logger.info(f"Prepared prompt with total token estimate: {total_tokens}")
+        base_tokens = self._count_tokens(base_prompt)
         
-        return prompt_template, total_tokens
+        # Calculate total tokens for the prompt
+        queries_text = "\n".join(queries)
+        queries_tokens = self._count_tokens(queries_text)
+        
+        # Build the full prompt
+        prompt_parts = [
+            base_prompt,
+            document_text,
+            "\n\nQUESTIONS:\n",
+            queries_text
+        ]
+        
+        total_tokens = base_tokens + doc_tokens + queries_tokens + 20  # Add buffer for formatting
+        
+        # Log token counts
+        logger.info(f"Token counts - Document: {doc_tokens}, Queries: {queries_tokens}, Total: {total_tokens}")
+        
+        for i in range(1, len(queries) + 1):
+            prompt_parts.append(f"Answer {i}: [Your answer to question {i}]\n")
+            
+        prompt_text = "".join(prompt_parts)
+        return prompt_text, total_tokens
 
     def _parse_llm_response(self, response_text: str, queries: List[str]) -> Dict[str, str]:
         """Parses the raw text response from the LLM into a structured dictionary."""
         responses = {}
-        num_queries = len(queries)
+        lines = [line.strip() for line in response_text.split('\n') if line.strip()]
         
-        # Initialize all queries with a default "not found" message
-        for i in range(num_queries):
-            # Using the original query as the key is more descriptive
-            responses[queries[i]] = "Could not parse an answer for this query."
-
-        # Split the response by lines that start with "Answer <number>:"
-        # This handles multi-line answers correctly.
-        import re
-        # The pattern looks for "Answer" (case-insensitive), optional space, a number, and a colon.
-        answer_sections = re.split(r'(?i)\bAnswer\s*\d+:', response_text)
-
-        if len(answer_sections) > 1:
-            # The first element is anything before "Answer 1:", so we discard it.
-            parsed_answers = answer_sections[1:]
+        for i, query in enumerate(queries, 1):
+            query_num = i
+            answer_prefix = f"Answer {query_num}:"
+            found_answer = "I couldn't find a specific answer to this question in the document."
             
-            for i, answer_text in enumerate(parsed_answers):
-                if i < num_queries:
-                    # The key is the original query text
-                    original_query = queries[i]
-                    responses[original_query] = answer_text.strip()
-
+            for line in lines:
+                if line.startswith(answer_prefix):
+                    found_answer = line[len(answer_prefix):].strip()
+                    # Clean up quotes if they wrap the entire answer
+                    if (found_answer.startswith('"') and found_answer.endswith('"')) or \
+                       (found_answer.startswith("'") and found_answer.endswith("'")):
+                        found_answer = found_answer[1:-1]
+                    break
+            responses[f"Query {query_num}"] = found_answer
+            
         return responses
 
     async def _process_batch_with_key(self, queries: List[str], document_text: str, metadata: Dict[str, Any], api_key: str) -> Dict[str, str]:
