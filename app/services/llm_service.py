@@ -20,15 +20,21 @@ from .query_logger import query_logger
 
 # List of API keys
 API_KEYS = [
-    "AIzaSyD1wpr6HXQzG67TopO5xIThzyQ1rxt85us",
-    "AIzaSyAw1xER-y-EpXVgg2DCQr_GLNBS1dlgDGo",
-    "AIzaSyDRafUeLPLv7wxqVrxZeetl5hGJoz39ax0",
-    "AIzaSyD2S-t1eQw-eLV-dplK7UR8i40k5oKRVGs",
-    "AIzaSyB-9VDWC3-6QGI3wQAie22f2OyIo06zTcg",
-    "AIzaSyDVuQGygWyeo2J40anesm3aWLQK5vmjGeM",
-    "AIzaSyCp1waEadzMh4p1HKmHr7GinZqzgJgFMDM",
-    "AIzaSyDzBLii6fraXMxwFsu9teJ8qPwpPZP33dE",
-    "AIzaSyCMcQUU-GrklfWQe9qs2pV3sh6dGNIOpE8"
+    "AIzaSyDAa0dhdGFViUi21NQi7N_6ke2ycpiNark",
+    "AIzaSyAcLhSQoDkl21TU-KSt-gQeYBnsdB6Z6Us",
+    "AIzaSyDSuF6W5nFHNvkFA1WsJNsuc9XSSeSN8zk",
+    "AIzaSyB1z571_km2zmFnS_knLBwe0FW-Vj--NUU",
+    "AIzaSyDhfuCmWvCrFOyVMxXuyV2Cmum-BvBlUG8",
+    "AIzaSyATLstXN7EbDJllawshb4Ma0MFlKHLfpXc",
+    "AIzaSyCL_84MAG8kNHnw6m9Xycb1H8FweXwhkTQ",
+    "AIzaSyB7RJZSsvjK2bPXPQBm683DdoXhUFNgQiI",
+    "AIzaSyCSbnkVBRFTLOpNZMP7R55OTLwhLLggQfk",
+    "AIzaSyBiKM-oux_CFUS3N6OINzFDTSLV43oyyYM"
+
+
+    
+
+   
 ]
 
 # Import configuration
