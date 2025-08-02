@@ -20,7 +20,6 @@ from .query_logger import query_logger
 
 # List of API keys
 API_KEYS = [
-    "AIzaSyDAa0dhdGFViUi21NQi7N_6ke2ycpiNark",
     "AIzaSyAcLhSQoDkl21TU-KSt-gQeYBnsdB6Z6Us",
     "AIzaSyDSuF6W5nFHNvkFA1WsJNsuc9XSSeSN8zk",
     "AIzaSyB1z571_km2zmFnS_knLBwe0FW-Vj--NUU",
@@ -30,10 +29,6 @@ API_KEYS = [
     "AIzaSyB7RJZSsvjK2bPXPQBm683DdoXhUFNgQiI",
     "AIzaSyCSbnkVBRFTLOpNZMP7R55OTLwhLLggQfk",
     "AIzaSyBiKM-oux_CFUS3N6OINzFDTSLV43oyyYM"
-
-
-    
-
    
 ]
 
