@@ -4,14 +4,13 @@ import google.generativeai as genai
 from typing import List, Dict, Any, Optional, Tuple
 from urllib.parse import urlparse
 import httpx
+import requests
 import time
 import traceback
 import json
 import random
 import logging
 import fitz  # PyMuPDF
-import io
-import tempfile
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
@@ -62,50 +61,26 @@ class LLMService:
         logger.info(f"Initializing LLMService with model: {self.model_name}")
         self._setup_genai()
         
-    async def _download_pdf(self, url: str) -> Optional[Tuple[bytes, str]]:
-        """Download PDF from URL asynchronously.
-        
-        Returns:
-            Tuple of (content, content_type) if successful, None otherwise
-        """
+    async def _download_and_extract_text(self, url: str) -> str:
+        """Download PDF and extract text synchronously in a thread."""
         try:
-            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-                # First, make a HEAD request to check content type
-                head_resp = await client.head(url)
-                head_resp.raise_for_status()
-                
-                content_type = head_resp.headers.get('content-type', '').lower()
-                if 'pdf' not in content_type and not url.lower().endswith('.pdf'):
-                    logger.warning(f"URL {url} does not appear to be a PDF (Content-Type: {content_type})")
-                    return None
-                
-                # If it looks like a PDF, download the full content
-                response = await client.get(url)
-                response.raise_for_status()
-                return response.content, content_type
+            # Use requests to download the PDF
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            
+            # Extract text using fitz
+            full_text = []
+            with fitz.open(stream=response.content, filetype="pdf") as doc:
+                for page in doc:
+                    full_text.append(page.get_text())
+            
+            return "\n".join(full_text)
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error downloading PDF: {str(e)}")
+            return ""
         except Exception as e:
-            logger.error(f"Error downloading from {url}: {str(e)}")
-            return None
-    
-    def _extract_text_from_pdf(self, pdf_data: bytes) -> str:
-        """Extract text from PDF data using PyMuPDF."""
-        try:
-            text = []
-            # First try opening as PDF
-            try:
-                with fitz.open(stream=pdf_data, filetype="pdf") as doc:
-                    for page in doc:
-                        text.append(page.get_text())
-                return "\n".join(text)
-            except Exception as pdf_err:
-                logger.warning(f"Failed to process as PDF, trying as generic document: {str(pdf_err)}")
-                # Try as a generic document
-                with fitz.open(stream=pdf_data, filetype="pdf") as doc:
-                    for page in doc:
-                        text.append(page.get_text())
-                return "\n".join(text)
-        except Exception as e:
-            logger.error(f"Error extracting text from document: {str(e)}")
+            logger.error(f"Error processing PDF: {str(e)}")
             logger.error(traceback.format_exc())
             return ""
     
@@ -121,28 +96,29 @@ class LLMService:
         if not self._is_valid_url(document_link):
             return False, "Invalid document URL"
             
-        logger.info(f"Downloading document from: {document_link}")
-        result = await self._download_pdf(document_link)
-        if not result:
-            return False, "Failed to download document"
-            
-        pdf_data, content_type = result
+        logger.info(f"Downloading and processing document from: {document_link}")
         
-        # Log the content type for debugging
-        logger.info(f"Downloaded document with Content-Type: {content_type}")
+        try:
+            # Run the synchronous download and extraction in a thread
+            loop = asyncio.get_event_loop()
+            text = await loop.run_in_executor(
+                self.executor,
+                lambda: self._download_and_extract_text(document_link)
+            )
             
-        # Run text extraction in a thread pool to avoid blocking
-        loop = asyncio.get_event_loop()
-        text = await loop.run_in_executor(
-            self.executor,
-            self._extract_text_from_pdf,
-            pdf_data
-        )
+            if not text.strip():
+                return False, "No text could be extracted from the document"
+                
+            logger.info(f"Successfully extracted {len(text)} characters from document")
+            return True, text
+            
+        except Exception as e:
+            error_msg = f"Error processing document: {str(e)}"
+            logger.error(error_msg)
+            logger.error(traceback.format_exc())
+            return False, error_msg
         
-        if not text.strip():
-            return False, "No text could be extracted from the document"
-            
-        return True, text
+
 
     def _setup_genai(self, used_keys=None):
         """Configures the Gemini API client with the current API key.
@@ -236,12 +212,11 @@ class LLMService:
             return False
 
     async def _is_document_accessible(self, url: str) -> bool:
-        """Checks if a document is accessible via an async HTTP HEAD request."""
+        """Checks if a document is accessible via an HTTP HEAD request."""
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.head(url, timeout=10, follow_redirects=True)
-                return response.status_code == 200
-        except httpx.RequestError:
+            response = requests.head(url, timeout=10, allow_redirects=True)
+            return response.status_code == 200
+        except requests.RequestException:
             return False
 
     def _prepare_prompt(self, queries: List[str], document_text: str) -> str:

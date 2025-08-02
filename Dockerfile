@@ -6,21 +6,16 @@ FROM python:3.11-slim AS builder
 WORKDIR /app
 
 # Install build-time system dependencies
+# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     python3-dev \
-    libjpeg62-turbo-dev \
-    zlib1g-dev \
-    libfreetype6-dev \
-    liblcms2-dev \
+    libjpeg62-turbo \
+    zlib1g \
+    libfreetype6 \
+    liblcms2-2 \
     libopenjp2-7 \
     libtiff6 \
-    libxcb1 \
-    libxcb1-dev \
-    libx11-6 \
-    libx11-xcb1 \
-    libxext6 \
-    libxrender1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create and activate virtual environment
@@ -41,20 +36,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install runtime system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libjpeg62-turbo \
-    zlib1g \
-    libfreetype6 \
-    liblcms2-2 \
-    libopenjp2-7 \
-    libtiff6 \
-    libxcb1 \
-    libx11-6 \
-    libx11-xcb1 \
-    libxext6 \
-    libxrender1 \
-    && rm -rf /var/lib/apt/lists/*
+
 
 # Create a non-root user and group
 RUN useradd --create-home --shell /bin/bash appuser
