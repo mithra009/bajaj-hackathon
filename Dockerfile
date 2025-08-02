@@ -9,12 +9,12 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     python3-dev \
-    libjpeg-dev \
+    libjpeg62-turbo-dev \
     zlib1g-dev \
     libfreetype6-dev \
     liblcms2-dev \
     libopenjp2-7 \
-    libtiff5 \
+    libtiff6 \
     libxcb1 \
     libxcb1-dev \
     libx11-6 \
@@ -48,7 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfreetype6 \
     liblcms2-2 \
     libopenjp2-7 \
-    libtiff5 \
+    libtiff6 \
     libxcb1 \
     libx11-6 \
     libx11-xcb1 \
