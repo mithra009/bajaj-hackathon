@@ -118,6 +118,9 @@ class LLMService:
                 return False, "No text could be extracted from the document"
                 
             logger.info(f"Successfully extracted {len(text)} characters from document")
+            # Log first 500 characters of the extracted text for debugging
+            sample_text = text[:500].replace('\n', ' ').strip()
+            logger.info(f"Extracted text sample (first 500 chars): {sample_text}...")
             return True, text
             
         except Exception as e:
@@ -226,31 +229,47 @@ class LLMService:
         except httpx.RequestError:
             return False
 
-    def _prepare_prompt(self, queries: List[str], document_text: str) -> str:
-        """Prepares the structured prompt for the LLM with extracted document text."""
-        # Truncate the document text if it's too long to fit in the context
+    def _count_tokens(self, text: str) -> int:
+        """Estimate the number of tokens in the given text."""
+        # Rough estimate: 1 token ~= 4 characters for English text
+        return (len(text) + 3) // 4
+
+    def _prepare_prompt(self, queries: List[str], document_text: str) -> Tuple[str, int]:
+        """Prepares the structured prompt for the LLM with extracted document text.
         
-
-            
-        prompt_parts = [
-
-            "\n----------------------------------------\n\n",
-            "INSTRUCTIONS:\n",
-            "1. Answer all questions based on the document content above.\n",
-            "2. If the answer is in the document, provide a clear, concise response (under 1000 characters).\n",
-            "3. If the answer is not in the document, provide a brief and general answer.\n",
-            "4. Do not mention that the document does not contain relevant content.\n\n",
+        Returns:
+            Tuple of (prompt_text, total_tokens)
+        """
+        # Count tokens for document text
+        doc_tokens = self._count_tokens(document_text)
+        
+        # Prepare base prompt parts
+        base_prompt = (
+            "You are a helpful AI assistant that answers questions based on the provided document context.\n"
+            "Answer the following questions based on the document content below.\n"
+            "If the answer cannot be found in the document, respond with 'The document does not provide specific details on this matter.'\n\n"
             "QUESTIONS TO ANSWER:\n"
-            "DOCUMENT CONTEXT:\n",
-            "----------------------------------------\n",
-            document_text
+            "DOCUMENT CONTEXT:\n"
+            "----------------------------------------\n"
+        )
+        base_tokens = self._count_tokens(base_prompt)
+        
+        # Calculate total tokens for the prompt
+        queries_text = "\n".join(queries)
+        queries_tokens = self._count_tokens(queries_text)
+        
+        # Build the full prompt
+        prompt_parts = [
+            base_prompt,
+            document_text,
+            "\n\nQUESTIONS:\n",
+            queries_text
         ]
         
-        for i, query in enumerate(queries, 1):
-            prompt_parts.append(f"{i}. {query}\n")
+        total_tokens = base_tokens + doc_tokens + queries_tokens + 20  # Add buffer for formatting
         
-        prompt_parts.append("\n===== YOUR RESPONSES =====\n")
-        prompt_parts.append("Format your responses like this for each question:\n")
+        # Log token counts
+        logger.info(f"Token counts - Document: {doc_tokens}, Queries: {queries_tokens}, Total: {total_tokens}")
         
         for i in range(1, len(queries) + 1):
             prompt_parts.append(f"Answer {i}: [Your answer to question {i}]\n")
@@ -280,19 +299,19 @@ class LLMService:
         return responses
 
     async def _process_batch_with_key(self, queries: List[str], document_text: str, metadata: Dict[str, Any], api_key: str) -> Dict[str, str]:
-        """Process a batch of queries with a specific API key using extracted document text."""
+        """Process a batch of queries with a specific API key."""
         try:
             # Create a new instance with the specified API key
-            temp_service = LLMService()
-            temp_service._setup_genai()
+            service = LLMService()
+            service.api_key = api_key
+            service._setup_genai()
             
-            # Process all queries in this batch in one go with the extracted text
-            prompt = temp_service._prepare_prompt(queries, document_text)
+            # Prepare the prompt with all queries and document text
+            prompt, token_count = self._prepare_prompt(queries, document_text)
+            logger.info(f"Processing batch {metadata.get('batch_num', '?')}/{metadata.get('total_batches', '?')} with {len(queries)} queries, {token_count} tokens using API key ...{api_key[-4:]}")
             
-            logger.info(f"Processing batch {metadata.get('batch_num', '?')}/{metadata.get('total_batches', '?')} "
-                      f"with {len(queries)} queries using API key ...{api_key[-4:]}")
-            
-            response = await temp_service.model.generate_content_async(
+            # Call the LLM with safety settings
+            response = await service.model.generate_content_async(
                 prompt,
                 generation_config={
                     "max_output_tokens": self.max_tokens,
@@ -305,25 +324,20 @@ class LLMService:
                 }
             )
             
+            # Get the response text
             response_text = response.text
             logger.debug(f"LLM response for batch {metadata.get('batch_num')}: {response_text[:200]}...")
             
             # Parse the response into individual answers
-            responses = self._parse_llm_response(response_text, queries)
-            
-            # Add log ID to responses if available
-            if 'log_id' in metadata:
-                responses['log_id'] = metadata['log_id']
-                
-            return responses
+            return self._parse_llm_response(response_text, queries)
             
         except Exception as e:
-            logger.error(f"Error processing batch with key ...{api_key[-4:]}: {str(e)}")
+            logger.error(f"Error in _process_batch_with_key: {str(e)}")
             logger.error(traceback.format_exc())
-            # Return default responses for all queries in this batch
+            # Return error responses for all queries in this batch
             return {f"Query {i+1}": f"Error processing request: {str(e)}" 
                    for i in range(len(queries))}
-    
+
     async def _process_batch(self, queries: List[str], document_text: str, metadata: Dict[str, Any]) -> Dict[str, str]:
         """Process a single batch of queries (up to MAX_QUERIES_PER_BATCH)."""
         # Use the current API key for this batch
