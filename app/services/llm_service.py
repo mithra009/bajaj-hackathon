@@ -165,6 +165,7 @@ class LLMService:
             "===== QUESTIONS TO ANSWER =====\n"
         ]
         for i, query in enumerate(queries, 1):
+            prompt_parts.append("Answer all questions in context with the document. If the answer is in the document, give a clear, concise response in under 1000 characters. If it is not in the document, then provide a brief and general answer.")
             prompt_parts.append(f"{i}. {query}\n")
         
         prompt_parts.append("\n===== YOUR RESPONSES =====\n")
