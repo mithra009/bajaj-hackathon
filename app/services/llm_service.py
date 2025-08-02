@@ -7,6 +7,7 @@ import httpx
 import requests
 import time
 import traceback
+import random
 import json
 import logging
 import fitz  # PyMuPDF
