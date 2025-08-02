@@ -129,40 +129,47 @@ class LLMService:
             logger.error(traceback.format_exc())
             return False, error_msg
 
-    def _setup_genai(self, used_keys=None):
+    def _setup_genai(self, used_keys=None, max_retries=3):
         """Configures the Gemini API client with the current API key.
         
         Args:
             used_keys: Set of API keys that have already been tried
+            max_retries: Maximum number of retry attempts with different API keys
         """
         used_keys = used_keys or set()
         
-        if not self.api_key:
-            available_keys = [k for k in API_KEYS if k not in used_keys]
-            if not available_keys:
-                raise ValueError("No available API keys left to try")
-            self.api_key = random.choice(available_keys)
-            
-        try:
-            genai.configure(api_key=self.api_key)
-            self.model = genai.GenerativeModel(self.model_name)
-            return True
-        except Exception as e:
-            error_msg = str(e).lower()
-            logger.error(f"Error with API key {self.api_key[:10]}...: {error_msg}")
-            
-            # Mark this key as used
-            used_keys.add(self.api_key)
-            
-            # Try a different API key if available
-            available_keys = [k for k in API_KEYS if k not in used_keys]
-            if available_keys:
+        for attempt in range(max_retries):
+            try:
+                if not self.api_key or self.api_key in used_keys:
+                    available_keys = [k for k in API_KEYS if k not in used_keys]
+                    if not available_keys:
+                        raise ValueError("No available API keys left to try")
+                    self.api_key = random.choice(available_keys)
+                
+                logger.info(f"Configuring Gemini API with key: {self.api_key[:10]}...")
+                genai.configure(api_key=self.api_key)
+                self.model = genai.GenerativeModel(self.model_name)
+                logger.info(f"Successfully configured Gemini API with model: {self.model_name}")
+                return True
+                
+            except Exception as e:
+                error_msg = str(e).lower()
+                logger.error(f"Attempt {attempt + 1} failed with API key {self.api_key[:10]}...: {error_msg}")
+                
+                # Mark this key as used
+                used_keys.add(self.api_key)
+                
+                # Check if we have more keys to try
+                available_keys = [k for k in API_KEYS if k not in used_keys]
+                if not available_keys:
+                    raise ValueError("All API keys have been exhausted. Please add more keys or try again later.")
+                
+                # Try next key if available
                 self.api_key = random.choice(available_keys)
                 logger.info(f"Retrying with API key: {self.api_key[:10]}...")
-                return self._setup_genai(used_keys)
-                
-            # If we get here, no more keys to try
-            raise ValueError("All API keys have been exhausted. Please add more keys or try again later.")
+        
+        # If we get here, we've exceeded max retries
+        raise ValueError(f"Failed to initialize Gemini API after {max_retries} attempts. Please check your API keys and try again.")
 
     async def _call_llm(self, prompt: str, retry_count: int = 0, used_keys: set = None) -> str:
         """Calls the LLM with the given prompt and returns the response.
