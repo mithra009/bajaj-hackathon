@@ -282,7 +282,8 @@ class LLMService:
         for i in range(1, len(queries) + 1):
             prompt_parts.append(f"Answer {i}: [Your answer to question {i}]\n")
             
-        return "".join(prompt_parts)
+        prompt_text = "".join(prompt_parts)
+        return prompt_text, total_tokens
 
     def _parse_llm_response(self, response_text: str, queries: List[str]) -> Dict[str, str]:
         """Parses the raw text response from the LLM into a structured dictionary."""
