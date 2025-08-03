@@ -5,7 +5,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies for PyMuPDF and sentence-transformers
+# Install system dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         libjpeg62-turbo \
@@ -14,11 +14,7 @@ RUN apt-get update && \
         liblcms2-2 \
         libopenjp2-7 \
         libtiff6 \
-        gcc \
-        g++ \
         curl \
-        build-essential \
-        && apt-get clean \
         && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user
@@ -30,11 +26,13 @@ RUN useradd --create-home --shell /bin/bash appuser && \
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
+ENV TORCH_VERSION=2.0.1
+ENV TORCHVISION_VERSION=0.15.2
+ENV TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 
 # Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir torch==2.0.1 --index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
