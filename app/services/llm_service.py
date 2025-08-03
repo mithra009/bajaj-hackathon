@@ -11,6 +11,7 @@ import random
 import json
 import logging
 import fitz  # PyMuPDF
+import re 
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
@@ -291,28 +292,39 @@ class LLMService:
         prompt_text = "".join(prompt_parts)
         return prompt_text, total_tokens
 
+
     def _parse_llm_response(self, response_text: str, queries: List[str]) -> Dict[str, str]:
         """Parses the raw text response from the LLM into a structured dictionary."""
         responses = {}
-        lines = [line.strip() for line in response_text.split('\n') if line.strip()]
-        
-        for i, query in enumerate(queries, 1):
-            query_num = i
-            answer_prefix = f"Answer {query_num}:"
-            found_answer = "I couldn't find a specific answer to this question in the document."
-            
-            for line in lines:
-                if line.startswith(answer_prefix):
-                    found_answer = line[len(answer_prefix):].strip()
-                    # Clean up quotes if they wrap the entire answer
-                    if (found_answer.startswith('"') and found_answer.endswith('"')) or \
-                       (found_answer.startswith("'") and found_answer.endswith("'")):
-                        found_answer = found_answer[1:-1]
-                    break
-            responses[f"Query {query_num}"] = found_answer
-            
-        return responses
+        num_queries = len(queries)
 
+        # Initialize all queries with a default "not found" message
+        # Using the original query as the key is more descriptive and useful
+        for query in queries:
+            responses[query] = "I couldn't find a specific answer to this question in the document."
+
+        # Use a regular expression to split the response by "Answer X:"
+        # This is much more flexible than checking line by line.
+        # (?i) makes it case-insensitive. \s* handles variable spaces.
+        pattern = r'(?i)Answer\s*\d+:'
+        answer_sections = re.split(pattern, response_text)
+
+        if len(answer_sections) > 1:
+            # The first element is anything before "Answer 1:", so we discard it.
+            parsed_answers = answer_sections[1:]
+            
+            for i, answer_text in enumerate(parsed_answers):
+                if i < num_queries:
+                    # Map the parsed answer to its original query
+                    original_query = queries[i]
+                    responses[original_query] = answer_text.strip()
+                    
+        # This handles the edge case where the AI gives a single block of text
+        # without any "Answer X:" formatting.
+        elif len(queries) == 1 and response_text.strip():
+            responses[queries[0]] = response_text.strip()
+                
+        return responses
     async def _process_batch_with_key(self, queries: List[str], document_text: str, metadata: Dict[str, Any], api_key: str) -> Dict[str, str]:
         """Process a batch of queries with a specific API key."""
         try:
