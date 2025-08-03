@@ -1,11 +1,9 @@
-# =================
-#  Builder Stage
-# =================
-FROM python:3.11-slim
+# Use a stable base image
+FROM python:3.11-slim-bullseye
 
 WORKDIR /app
 
-# Install system dependencies for PyMuPDF and sentence-transformers
+# Install system dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         libjpeg62-turbo \
@@ -14,9 +12,9 @@ RUN apt-get update && \
         liblcms2-2 \
         libopenjp2-7 \
         libtiff6 \
+        curl \
         gcc \
         g++ \
-        curl \
         build-essential \
         && apt-get clean \
         && rm -rf /var/lib/apt/lists/*
@@ -39,8 +37,6 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
 
 # Copy application code
 COPY --chown=appuser:appuser app ./app
-COPY --chown=appuser:appuser startup.py .
-COPY --chown=appuser:appuser test_embeddings.py .
 
 # Switch to non-root user
 USER appuser
@@ -52,5 +48,5 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=10s --retries=3 \
 # Expose the port the app runs on
 EXPOSE 8000
 
-# Command to run the application with startup check
-CMD ["sh", "-c", "python startup.py && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+# Command to run the application
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"] 

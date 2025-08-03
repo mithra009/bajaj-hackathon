@@ -1,11 +1,9 @@
-# =================
-#  Builder Stage
-# =================
-FROM python:3.11-slim
+# Use a more stable base image
+FROM python:3.11-slim-bullseye
 
 WORKDIR /app
 
-# Install system dependencies for PyMuPDF and sentence-transformers
+# Install system dependencies in separate steps for better error handling
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         libjpeg62-turbo \
@@ -14,9 +12,15 @@ RUN apt-get update && \
         liblcms2-2 \
         libopenjp2-7 \
         libtiff6 \
+        curl \
+        && apt-get clean \
+        && rm -rf /var/lib/apt/lists/*
+
+# Install build tools separately
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
         gcc \
         g++ \
-        curl \
         build-essential \
         && apt-get clean \
         && rm -rf /var/lib/apt/lists/*
@@ -53,4 +57,4 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=10s --retries=3 \
 EXPOSE 8000
 
 # Command to run the application with startup check
-CMD ["sh", "-c", "python startup.py && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "python startup.py && uvicorn app.main:app --host 0.0.0.0 --port 8000"] 
