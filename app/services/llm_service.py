@@ -12,12 +12,14 @@ import json
 import logging
 import fitz  # PyMuPDF
 import re 
+import numpy as np
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
 from .query_logger import query_logger
+from .embedding_service import embedding_service
 
 # List of API keys
 API_KEYS = [
@@ -31,7 +33,6 @@ API_KEYS = [
     "AIzaSyCSbnkVBRFTLOpNZMP7R55OTLwhLLggQfk",
     "AIzaSyBiKM-oux_CFUS3N6OINzFDTSLV43oyyYM",
     "AIzaSyAbhjgML1-xGuKAtaU_HdY-r_97VU3T_M8",
-    "AIzaSyDQTRnTb64NOMQSwNEXsBejPOVkYbXKcPY",
     "AIzaSyC0FHtPjc5rhs3_avBUtwn5itwY1PQRzRI",
     "AIzaSyAQ_bs7cI1GH_yDnAU0SF7M4IaxjDT5m3o",
     "AIzaSyD8DEINr8qD6-kVo5-jSb9wjm5v27X7zuY"
@@ -39,7 +40,7 @@ API_KEYS = [
 ]
 
 # Import configuration
-from app.config import MODEL_NAME, MAX_TOKENS, MAX_QUERIES_PER_BATCH
+from app.config import MODEL_NAME, MAX_TOKENS, MAX_QUERIES_PER_BATCH, TOP_K_CHUNKS
 
 # Configure logging
 logging.basicConfig(
@@ -65,6 +66,7 @@ class LLMService:
         self.model_name = MODEL_NAME
         self.max_tokens = MAX_TOKENS
         self.executor = ThreadPoolExecutor(max_workers=5)  # For parallel processing
+        self.embedding_cache = {}  # Cache for document embeddings
         logger.info(f"Initializing LLMService with model: {self.model_name}")
         self._setup_genai()
         
@@ -248,51 +250,127 @@ class LLMService:
         """Estimate the number of tokens in the given text."""
         # Rough estimate: 1 token ~= 4 characters for English text
         return (len(text) + 3) // 4
-
-    def _prepare_prompt(self, queries: List[str], document_text: str) -> Tuple[str, int]:
-        """Prepares the structured prompt for the LLM with extracted document text.
+    
+    def _get_cache_key(self, document_link: str) -> str:
+        """Generate a cache key for document embeddings."""
+        return f"embeddings_{hash(document_link)}"
+    
+    async def _get_document_embeddings(self, document_text: str, document_link: str) -> Tuple[List[str], np.ndarray]:
+        """
+        Get document embeddings from cache or generate them.
         
+        Args:
+            document_text: The document text
+            document_link: The document URL for caching
+            
+        Returns:
+            Tuple of (chunks, embeddings)
+        """
+        cache_key = self._get_cache_key(document_link)
+        
+        if cache_key in self.embedding_cache:
+            logger.info(f"Using cached embeddings for document: {document_link}")
+            return self.embedding_cache[cache_key]
+        
+        # Generate embeddings
+        chunks, embeddings = await embedding_service.generate_document_embeddings(document_text)
+        
+        # Cache the embeddings
+        self.embedding_cache[cache_key] = (chunks, embeddings)
+        logger.info(f"Cached embeddings for document: {document_link}")
+        
+        return chunks, embeddings
+    
+    def _cleanup_cache(self, document_link: str):
+        """Clean up cached embeddings for a document."""
+        cache_key = self._get_cache_key(document_link)
+        if cache_key in self.embedding_cache:
+            del self.embedding_cache[cache_key]
+            logger.info(f"Cleaned up cached embeddings for document: {document_link}")
+    
+    async def _get_relevant_context(self, queries: List[str], document_text: str, document_link: str) -> List[str]:
+        """
+        Get relevant context for each query using embeddings.
+        
+        Args:
+            queries: List of queries
+            document_text: The document text
+            document_link: The document URL
+            
+        Returns:
+            List of relevant context strings for each query
+        """
+        try:
+            # Get document embeddings
+            chunks, chunk_embeddings = await self._get_document_embeddings(document_text, document_link)
+            
+            if not chunks:
+                logger.warning("No chunks available for retrieval")
+                return [document_text[:2000] for _ in queries]  # Fallback to first 2000 chars
+            
+            # Generate query embeddings
+            query_embeddings = await embedding_service.generate_query_embeddings(queries)
+            
+            # Find top chunks for each query
+            top_chunks_per_query = embedding_service.find_top_chunks(
+                query_embeddings, chunk_embeddings, chunks, top_k=TOP_K_CHUNKS
+            )
+            
+            # Combine top chunks for each query
+            relevant_contexts = []
+            for i, top_chunks in enumerate(top_chunks_per_query):
+                if top_chunks:
+                    # Combine chunks with their similarity scores
+                    context_parts = []
+                    for chunk, score in top_chunks:
+                        context_parts.append(f"[Relevance: {score:.3f}] {chunk}")
+                    
+                    context = "\n\n".join(context_parts)
+                    relevant_contexts.append(context)
+                    logger.info(f"Query {i+1}: Found {len(top_chunks)} relevant chunks (max similarity: {max(score for _, score in top_chunks):.3f})")
+                else:
+                    # Fallback to first chunk if no relevant chunks found
+                    relevant_contexts.append(chunks[0] if chunks else document_text[:2000])
+                    logger.warning(f"Query {i+1}: No relevant chunks found, using fallback")
+            
+            return relevant_contexts
+            
+        except Exception as e:
+            logger.error(f"Error in embedding-based retrieval: {str(e)}")
+            # Fallback to using the full document
+            return [document_text[:2000] for _ in queries]
+
+    def _prepare_prompt(self, queries: List[str], relevant_contexts: List[str]) -> Tuple[str, int]:
+        """Prepares the structured prompt for the LLM with relevant context for each query.
+        
+        Args:
+            queries: List of queries
+            relevant_contexts: List of relevant context strings for each query
+            
         Returns:
             Tuple of (prompt_text, total_tokens)
         """
-        # Count tokens for document text
-        doc_tokens = self._count_tokens(document_text)
-        
-        # Prepare base prompt parts
+        # Prepare base prompt
         base_prompt = (
             "You are a helpful AI assistant that answers questions based on the provided document context.\n"
-            "Response format: Answer {question number}: response\n"
             "Answer the following questions based on the document content within 1000 characters. Follow the format strictly.\n"
             "If the answer cannot be found in the document, respond generally from your knowledge.\n\n"
         )
         base_tokens = self._count_tokens(base_prompt)
         
-        # Calculate total tokens for the prompt
-        queries_text = "\n".join(queries)
-        queries_tokens = self._count_tokens(queries_text)
+        # Build prompts for each query with its relevant context
+        all_prompts = []
+        total_tokens = base_tokens
         
-        prompt_parts = [
-            base_prompt,
-            "\n\nQUESTIONS:\n",
-            queries_text,
-            document_text
-            
-        ]
+        for i, (query, context) in enumerate(zip(queries, relevant_contexts)):
+            query_prompt = f"Question {i+1}: {query}\n\nRelevant Document Context:\n{context}\n\nAnswer {i+1}: "
+            all_prompts.append(query_prompt)
+            total_tokens += self._count_tokens(query_prompt)
         
-        total_tokens = base_tokens + doc_tokens + queries_tokens + 20  # Add buffer for formatting
+        # Combine all prompts
+        prompt_text = base_prompt + "\n\n".join(all_prompts)
         
-        # Log token counts
-        logger.info(f"Token counts - Document: {doc_tokens}, Queries: {queries_tokens}, Total: {total_tokens}")
-        
-        # Add the questions to the prompt
-        for i, query in enumerate(queries, 1):
-            prompt_parts.append(f"Question {i}: {query}\n")
-            
-        prompt_parts.append("\nPlease provide your answers in the following format:\n")
-        for i in range(1, len(queries) + 1):
-            prompt_parts.append(f"Answer {i}: [Your answer to question {i}]\n")
-            
-        prompt_text = "".join(prompt_parts)
+        logger.info(f"Prepared prompt with {len(queries)} queries, total tokens: {total_tokens}")
         return prompt_text, total_tokens
 
 
@@ -333,16 +411,16 @@ class LLMService:
             responses["Query 1"] = clean_answer
                 
         return responses
-    async def _process_batch_with_key(self, queries: List[str], document_text: str, metadata: Dict[str, Any], api_key: str) -> Dict[str, str]:
-        """Process a batch of queries with a specific API key."""
+    async def _process_batch_with_key(self, queries: List[str], relevant_contexts: List[str], metadata: Dict[str, Any], api_key: str) -> Dict[str, str]:
+        """Process a batch of queries with a specific API key using relevant context."""
         try:
             # Create a new instance with the specified API key
             service = LLMService()
             service.api_key = api_key
             service._setup_genai()
             
-            # Prepare the prompt with all queries and document text
-            prompt, token_count = self._prepare_prompt(queries, document_text)
+            # Prepare the prompt with queries and their relevant contexts
+            prompt, token_count = self._prepare_prompt(queries, relevant_contexts)
             logger.info(f"Processing batch {metadata.get('batch_num', '?')}/{metadata.get('total_batches', '?')} with {len(queries)} queries, {token_count} tokens using API key ...{api_key[-4:]}")
             
             # Call the LLM with safety settings
@@ -375,10 +453,10 @@ class LLMService:
             return {f"Query {i+1}": f"Error processing request: {str(e)}" 
                    for i in range(len(queries))}
 
-    async def _process_batch(self, queries: List[str], document_text: str, metadata: Dict[str, Any]) -> Dict[str, str]:
+    async def _process_batch(self, queries: List[str], relevant_contexts: List[str], metadata: Dict[str, Any]) -> Dict[str, str]:
         """Process a single batch of queries (up to MAX_QUERIES_PER_BATCH)."""
         # Use the current API key for this batch
-        return await self._process_batch_with_key(queries, document_text, metadata, self.api_key)
+        return await self._process_batch_with_key(queries, relevant_contexts, metadata, self.api_key)
 
     async def generate_response(self, queries: List[str], document_link: str, metadata: Dict[str, Any] = None) -> Dict[str, str]:
         """
@@ -414,6 +492,10 @@ class LLMService:
             logger.info(f"Extracted document text length: {len(document_text)} characters")
             logger.info(f"Document text sample: {document_text[:200]}...")
             
+            # Get relevant context for each query using embeddings
+            logger.info("Generating embeddings and finding relevant context for queries...")
+            relevant_contexts = await self._get_relevant_context(queries, document_text, document_link)
+            
             # Prepare metadata for logging
             query_metadata = {
                 "document_link": document_link,
@@ -421,6 +503,7 @@ class LLMService:
                 "num_queries": len(queries),
                 "document_accessible": is_accessible,
                 "processing_mode": "batched" if len(queries) > MAX_QUERIES_PER_BATCH else "single",
+                "embedding_retrieval": True,
                 **metadata
             }
             
@@ -432,11 +515,15 @@ class LLMService:
             query_batches = [queries[i:i + MAX_QUERIES_PER_BATCH] 
                           for i in range(0, len(queries), MAX_QUERIES_PER_BATCH)]
             
+            # Split relevant contexts into corresponding batches
+            context_batches = [relevant_contexts[i:i + MAX_QUERIES_PER_BATCH] 
+                             for i in range(0, len(relevant_contexts), MAX_QUERIES_PER_BATCH)]
+            
             # Create a list to store batch tasks with their assigned API keys
             batch_tasks = []
             used_keys = set()
             
-            for batch_num, batch in enumerate(query_batches, 1):
+            for batch_num, (batch, batch_contexts) in enumerate(zip(query_batches, context_batches), 1):
                 # Get an available API key that hasn't been used in this request
                 available_keys = [k for k in API_KEYS if k not in used_keys]
                 if not available_keys:
@@ -459,7 +546,7 @@ class LLMService:
                 # Create a task for this batch with its own LLMService instance
                 task = self._process_batch_with_key(
                     batch, 
-                    document_text,  # Pass the extracted text
+                    batch_contexts,  # Pass the relevant contexts for this batch
                     batch_metadata, 
                     batch_key
                 )
@@ -499,6 +586,9 @@ class LLMService:
                 logger.error(f"Failed to log query: {str(e)}")
                 logger.error(traceback.format_exc())
             
+            # Clean up embedding cache for this document
+            self._cleanup_cache(document_link)
+            
             return combined_responses
 
         except Exception as e:
@@ -507,6 +597,9 @@ class LLMService:
             logger.error(f"Error message: {str(e)}")
             logger.error("=== STACK TRACE ===")
             logger.error(traceback.format_exc())
+            
+            # Clean up embedding cache for this document
+            self._cleanup_cache(document_link)
             
             # Return default responses for all queries
             return {f"Query {i+1}": f"Error processing request: {str(e)}" 
