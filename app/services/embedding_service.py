@@ -2,12 +2,22 @@ import asyncio
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
-from typing import List, Dict, Tuple, Any
+from typing import List, Dict, Tuple, Any, Optional
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor
+import os
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 import re
-from app.config import EMBEDDING_MODEL, CHUNK_SIZE, CHUNK_OVERLAP, TOP_K_CHUNKS, MAX_WORKERS
+from app.config import (
+    EMBEDDING_MODEL, 
+    CHUNK_SIZE, 
+    CHUNK_OVERLAP, 
+    TOP_K_CHUNKS, 
+    MAX_WORKERS, 
+    MODEL_CACHE_DIR,
+    MODEL_LOAD_TIMEOUT
+)
 
 logger = logging.getLogger(__name__)
 
