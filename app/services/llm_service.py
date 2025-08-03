@@ -261,9 +261,9 @@ class LLMService:
         # Prepare base prompt parts
         base_prompt = (
             "You are a helpful AI assistant that answers questions based on the provided document context.\n"
-            "Answer the following questions based on the document content below.\n"
-            "If the answer cannot be found in the document, respond with 'The document does not provide specific details on this matter.'\n\n"
-            "QUESTIONS TO ANSWER:\n"
+            "Response format: Answer {question number}: response.."
+            "Answer the following questions based on the document content within 1000 characters follow the format strictly.\n"
+            "If the answer cannot be found in the document, respond generally from ur knowledge .'\n\n"
             "DOCUMENT CONTEXT:\n"
             "----------------------------------------\n"
         )
