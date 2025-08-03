@@ -273,7 +273,6 @@ class LLMService:
         queries_text = "\n".join(queries)
         queries_tokens = self._count_tokens(queries_text)
         
-        # Build the full prompt
         prompt_parts = [
             base_prompt,
             document_text,
