@@ -261,11 +261,9 @@ class LLMService:
         # Prepare base prompt parts
         base_prompt = (
             "You are a helpful AI assistant that answers questions based on the provided document context.\n"
-            "Response format: Answer {question number}: response.."
-            "Answer the following questions based on the document content within 1000 characters follow the format strictly.\n"
-            "If the answer cannot be found in the document, respond generally from ur knowledge .'\n\n"
-            "DOCUMENT CONTEXT:\n"
-            "----------------------------------------\n"
+            "Response format: Answer {question number}: response\n"
+            "Answer the following questions based on the document content within 1000 characters. Follow the format strictly.\n"
+            "If the answer cannot be found in the document, respond generally from your knowledge.\n\n"
         )
         base_tokens = self._count_tokens(base_prompt)
         
@@ -275,9 +273,10 @@ class LLMService:
         
         prompt_parts = [
             base_prompt,
-            document_text,
             "\n\nQUESTIONS:\n",
-            queries_text
+            queries_text,
+            document_text
+            
         ]
         
         total_tokens = base_tokens + doc_tokens + queries_tokens + 20  # Add buffer for formatting
@@ -285,6 +284,11 @@ class LLMService:
         # Log token counts
         logger.info(f"Token counts - Document: {doc_tokens}, Queries: {queries_tokens}, Total: {total_tokens}")
         
+        # Add the questions to the prompt
+        for i, query in enumerate(queries, 1):
+            prompt_parts.append(f"Question {i}: {query}\n")
+            
+        prompt_parts.append("\nPlease provide your answers in the following format:\n")
         for i in range(1, len(queries) + 1):
             prompt_parts.append(f"Answer {i}: [Your answer to question {i}]\n")
             
@@ -298,9 +302,10 @@ class LLMService:
         num_queries = len(queries)
 
         # Initialize all queries with a default "not found" message
-        # Using the original query as the key is more descriptive and useful
-        for query in queries:
+        # Use both original query and "Query X" format for compatibility
+        for i, query in enumerate(queries, 1):
             responses[query] = "I couldn't find a specific answer to this question in the document."
+            responses[f"Query {i}"] = "I couldn't find a specific answer to this question in the document."
 
         # Use a regular expression to split the response by "Answer X:"
         # This is much more flexible than checking line by line.
@@ -314,14 +319,18 @@ class LLMService:
             
             for i, answer_text in enumerate(parsed_answers):
                 if i < num_queries:
-                    # Map the parsed answer to its original query
+                    # Map the parsed answer to both original query and "Query X" format
                     original_query = queries[i]
-                    responses[original_query] = answer_text.strip()
+                    clean_answer = answer_text.strip()
+                    responses[original_query] = clean_answer
+                    responses[f"Query {i+1}"] = clean_answer
                     
         # This handles the edge case where the AI gives a single block of text
         # without any "Answer X:" formatting.
         elif len(queries) == 1 and response_text.strip():
-            responses[queries[0]] = response_text.strip()
+            clean_answer = response_text.strip()
+            responses[queries[0]] = clean_answer
+            responses["Query 1"] = clean_answer
                 
         return responses
     async def _process_batch_with_key(self, queries: List[str], document_text: str, metadata: Dict[str, Any], api_key: str) -> Dict[str, str]:
@@ -352,10 +361,12 @@ class LLMService:
             
             # Get the response text
             response_text = response.text
-            logger.debug(f"LLM response for batch {metadata.get('batch_num')}: {response_text[:200]}...")
+            logger.info(f"LLM response for batch {metadata.get('batch_num')}: {response_text[:500]}...")
             
             # Parse the response into individual answers
-            return self._parse_llm_response(response_text, queries)
+            parsed_responses = self._parse_llm_response(response_text, queries)
+            logger.info(f"Parsed responses: {parsed_responses}")
+            return parsed_responses
             
         except Exception as e:
             logger.error(f"Error in _process_batch_with_key: {str(e)}")
@@ -398,6 +409,10 @@ class LLMService:
             success, document_text = await self.get_document_text(document_link)
             if not success:
                 raise ValueError(f"Failed to process document: {document_text}")
+            
+            # Log document text length for debugging
+            logger.info(f"Extracted document text length: {len(document_text)} characters")
+            logger.info(f"Document text sample: {document_text[:200]}...")
             
             # Prepare metadata for logging
             query_metadata = {
