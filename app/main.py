@@ -96,25 +96,25 @@ async def query_document(
     query_data: QueryRequest = Body(...)
 ):
     """
-    Query the LLM with a list of questions and a document link using embedding-based retrieval.
+    Query the LLM with a list of questions and a document link.
     """
-    logger.info("="*50)
-    logger.info("=== NEW REQUEST RECEIVED ===")
-    logger.info(f"Document: {query_data.documents}")
-    logger.info(f"Number of questions: {len(query_data.questions)}")
+    print("\n" + "="*50)
+    print("=== NEW REQUEST RECEIVED ===")
+    print(f"Document: {query_data.documents}")
+    print(f"Number of questions: {len(query_data.questions)}")
     
     try:
         start_time = time.time()
         
         # Log the request details
-        logger.info("=== REQUEST DETAILS ===")
-        logger.info(f"Document URL: {query_data.documents}")
-        logger.info("Questions:")
+        print("\n=== REQUEST DETAILS ===")
+        print(f"Document URL: {query_data.documents}")
+        print("\nQuestions:")
         for i, question in enumerate(query_data.questions, 1):
-            logger.info(f"  {i}. {question}")
+            print(f"  {i}. {question}")
         
         # Call the LLM service with additional metadata
-        logger.info("=== CALLING LLM SERVICE WITH EMBEDDING RETRIEVAL ===")
+        print("\n=== CALLING LLM SERVICE ===")
         client_host = request.client.host if request.client else "unknown"
         user_agent = request.headers.get("user-agent", "unknown")
         
@@ -123,31 +123,28 @@ async def query_document(
             document_link=query_data.documents,
             metadata={
                 "source_ip": client_host,
-                "user_agent": user_agent,
-                "embedding_retrieval": True
+                "user_agent": user_agent
             }
         )
         
         # Process the responses
-        logger.info("=== PROCESSING RESPONSES ===")
+        print("\n=== PROCESSING RESPONSES ===")
         answers = []
         for i in range(1, len(query_data.questions) + 1):
             answer = responses.get(f"Query {i}", "No answer found")
             answers.append(answer)
-            logger.info(f"Answer {i}: {answer[:100]}..." if len(answer) > 100 else f"Answer {i}: {answer}")
+            print(f"Answer {i}: {answer[:100]}..." if len(answer) > 100 else f"Answer {i}: {answer}")
         
         # Calculate processing time
         processing_time = time.time() - start_time
-        logger.info(f"=== REQUEST COMPLETED ===")
-        logger.info(f"Total processing time: {processing_time:.2f} seconds")
-        logger.info("="*50)
+        print(f"\n=== REQUEST COMPLETED ===")
+        print(f"Total processing time: {processing_time:.2f} seconds")
+        print("="*50 + "\n")
         
         # Return the answers along with the log ID
         return {
             "answers": answers,
-            "log_id": responses.get("log_id"),
-            "processing_time": processing_time,
-            "embedding_retrieval": True
+            "log_id": responses.get("log_id")
         }
         
     except HTTPException:
@@ -156,11 +153,10 @@ async def query_document(
         
     except Exception as e:
         error_msg = f"Unexpected error: {str(e)}"
-        logger.error(f"=== ERROR ===")
-        logger.error(error_msg)
+        print(f"\n=== ERROR ===\n{error_msg}")
         import traceback
-        logger.error(traceback.format_exc())
-        logger.error("="*50)
+        traceback.print_exc()
+        print("="*50 + "\n")
         # Return empty answers array on error
         return {"answers": []}
 
@@ -169,25 +165,14 @@ async def query_document(
 @app.get("/")
 async def root():
     return {
-        "message": "LLM Query API with Embedding-Based Retrieval is running",
+        "message": "LLM Query API is running",
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
-        "features": {
-            "embedding_retrieval": True,
-            "model": "all-MiniLM-L6-v2",
-            "chunk_size": 1200,
-            "top_k_chunks": 5
-        },
         "endpoints": {
             "document_query": {
                 "method": "POST",
                 "path": "/hackrx/run",
-                "description": "Query documents with semantic search using embeddings"
-            },
-            "logs": {
-                "method": "GET",
-                "path": "/hackrx/logs",
-                "description": "Retrieve query logs"
+                "description": "Query documents with a list of questions"
             },
             "health": {
                 "method": "GET",

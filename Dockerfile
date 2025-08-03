@@ -40,7 +40,6 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
 # Copy application code
 COPY --chown=appuser:appuser app ./app
 COPY --chown=appuser:appuser startup.py .
-COPY --chown=appuser:appuser test_embeddings.py .
 
 # Switch to non-root user
 USER appuser

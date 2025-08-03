@@ -1,11 +1,10 @@
 #!/bin/bash
 
 # LLM Query API Deployment Script
-# This script builds and runs the application with embedding-based retrieval
 
 set -e
 
-echo "🚀 Deploying LLM Query API with Embedding Retrieval..."
+echo "🚀 Deploying LLM Query API..."
 
 # Check if Docker is installed
 if ! command -v docker &> /dev/null; then
@@ -29,7 +28,7 @@ echo "🔧 Starting services..."
 docker-compose up -d
 
 echo "⏳ Waiting for service to be ready..."
-sleep 10
+sleep 15
 
 # Check if service is running
 if curl -f http://localhost:8000/health > /dev/null 2>&1; then

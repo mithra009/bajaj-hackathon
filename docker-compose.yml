@@ -2,9 +2,7 @@ version: '3.8'
 
 services:
   llm-query-api:
-    build:
-      context: .
-      dockerfile: Dockerfile.basic
+    build: .
     container_name: llm-query-api
     ports:
       - "8000:8000"
