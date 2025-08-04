@@ -1,6 +1,6 @@
 import os
 import asyncio
-import google.generativeai as genai
+import openai
 from typing import List, Dict, Any, Optional, Tuple
 from urllib.parse import urlparse
 import httpx
@@ -15,7 +15,6 @@ import re
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import json
 from pathlib import Path
 import os
@@ -29,6 +28,9 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise ValueError("OPENAI_API_KEY environment variable not set")
+
+# Configure OpenAI client
+openai.api_key = OPENAI_API_KEY
 
 def get_next_key_index():
     """Get the next key index to use, with persistence."""
@@ -72,19 +74,12 @@ class LLMService:
         self.max_tokens = MAX_TOKENS
         self.executor = ThreadPoolExecutor(max_workers=5)  # For parallel processing
         logger.info(f"Initializing LLMService with model: {self.model_name}")
-        self._setup_genai()
+        self._setup_openai()
         
-    def _get_next_api_key(self):
-        """Get the next API key using persistent rotation."""
-        key_index = get_next_key_index()
-        return API_KEYS[key_index]
-    
-    def _setup_genai(self):
-        """Setup the GenAI client with the next available API key."""
-        self.api_key = self._get_next_api_key()
-        logger.info(f"Using API key (last 5 chars): {self.api_key[-5:]}")
-        genai.configure(api_key=self.api_key)
-        self.model = genai.GenerativeModel(self.model_name)
+    def _setup_openai(self):
+        """Setup the OpenAI client."""
+        self.client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        logger.info("OpenAI client initialized")
         
     def _download_and_extract_text(self, url: str) -> str:
         """
@@ -157,13 +152,13 @@ class LLMService:
 
 
 
-    async def _call_llm(self, prompt: str, retry_count: int = 0, used_keys: set = None) -> str:
-        """Calls the LLM with the given prompt and returns the response.
+    async def _call_llm(self, prompt: str, retry_count: int = 0, max_retries: int = 3) -> str:
+        """Calls the OpenAI API with the given prompt and returns the response.
         
         Args:
             prompt: The prompt to send to the LLM
             retry_count: Number of retry attempts so far
-            used_keys: Set of API keys that have already been tried
+            max_retries: Maximum number of retry attempts
             
         Returns:
             The LLM response text
@@ -171,16 +166,24 @@ class LLMService:
         Raises:
             Exception: If all retry attempts fail
         """
-        used_keys = used_keys or set()
-        max_retries = len(API_KEYS) * 2  # Allow trying each key twice
-        
         try:
-            response = await self.model.generate_content_async(prompt)
-            return response.text
+            response = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    max_tokens=self.max_tokens,
+                    temperature=0.7
+                )
+            )
+            return response.choices[0].message.content
             
         except Exception as e:
             error_msg = str(e).lower()
-            logger.error(f"Error calling LLM: {error_msg}")
+            logger.error(f"Error calling OpenAI API: {error_msg}")
             
             # Check if this is a rate limit or quota error
             is_rate_limit = any(keyword in error_msg for keyword in [
@@ -189,18 +192,10 @@ class LLMService:
             ])
             
             if is_rate_limit and retry_count < max_retries:
-                logger.info(f"Rate limit hit. Retrying with a different API key (attempt {retry_count + 1}/{max_retries})...")
-                # Mark current key as used
-                used_keys.add(self.api_key)
-                # Get a new key
-                available_keys = [k for k in API_KEYS if k not in used_keys]
-                if available_keys:
-                    self.api_key = random.choice(available_keys)
-                    logger.info(f"Switching to API key: {self.api_key[:10]}...")
-                    # Re-initialize with new key
-                    self._setup_genai(used_keys)
-                    # Retry the request
-                    return await self._call_llm(prompt, retry_count + 1, used_keys)
+                wait_time = (2 ** retry_count) + (random.randint(0, 1000) / 1000)  # Exponential backoff with jitter
+                logger.info(f"Rate limit hit. Retrying in {wait_time:.2f} seconds (attempt {retry_count + 1}/{max_retries})...")
+                await asyncio.sleep(wait_time)
+                return await self._call_llm(prompt, retry_count + 1, max_retries)
             
             # If we get here, either it's not a rate limit error or we've exhausted retries
             raise
@@ -311,34 +306,29 @@ class LLMService:
             responses["Query 1"] = clean_answer
                 
         return responses
-    async def _process_batch_with_key(self, queries: List[str], document_text: str, metadata: Dict[str, Any], api_key: str) -> Dict[str, str]:
-        """Process a batch of queries with a specific API key."""
+    async def _process_batch(self, queries: List[str], document_text: str, metadata: Dict[str, Any]) -> Dict[str, str]:
+        """Process a single batch of queries (up to MAX_QUERIES_PER_BATCH)."""
         try:
-            # Create a new instance with the specified API key
-            service = LLMService()
-            service.api_key = api_key
-            service._setup_genai()
-            
             # Prepare the prompt with all queries and document text
             prompt, token_count = self._prepare_prompt(queries, document_text)
-            logger.info(f"Processing batch {metadata.get('batch_num', '?')}/{metadata.get('total_batches', '?')} with {len(queries)} queries, {token_count} tokens using API key ...{api_key[-4:]}")
+            logger.info(f"Processing batch {metadata.get('batch_num', '?')}/{metadata.get('total_batches', '?')} with {len(queries)} queries, {token_count} tokens")
             
-            # Call the LLM with safety settings
-            response = await service.model.generate_content_async(
-                prompt,
-                generation_config={
-                    "max_output_tokens": self.max_tokens,
-                },
-                safety_settings={
-                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-                }
+            # Call the OpenAI API using the main client
+            response = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant that answers questions based on the provided document text."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    max_tokens=self.max_tokens,
+                    temperature=0.7
+                )
             )
             
             # Get the response text
-            response_text = response.text
+            response_text = response.choices[0].message.content
             logger.info(f"LLM response for batch {metadata.get('batch_num')}: {response_text[:500]}...")
             
             # Parse the response into individual answers
@@ -347,16 +337,11 @@ class LLMService:
             return parsed_responses
             
         except Exception as e:
-            logger.error(f"Error in _process_batch_with_key: {str(e)}")
+            logger.error(f"Error processing batch: {str(e)}")
             logger.error(traceback.format_exc())
             # Return error responses for all queries in this batch
             return {f"Query {i+1}": f"Error processing request: {str(e)}" 
                    for i in range(len(queries))}
-
-    async def _process_batch(self, queries: List[str], document_text: str, metadata: Dict[str, Any]) -> Dict[str, str]:
-        """Process a single batch of queries (up to MAX_QUERIES_PER_BATCH)."""
-        # Use the current API key for this batch
-        return await self._process_batch_with_key(queries, document_text, metadata, self.api_key)
 
     async def generate_response(self, queries: List[str], document_link: str, metadata: Dict[str, Any] = None) -> Dict[str, str]:
         """

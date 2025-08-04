@@ -21,7 +21,7 @@ API_KEY = "fd53cda9e372cc74319d047c60acdcc06e62e7e5550a92d842c425b82df84e4d"
 app = FastAPI(
     title="LLM Query API",
     version="1.0.0",
-    description="API for querying documents using Google's Gemini LLM"
+    description="API for querying documents using OpenAI's GPT models"
 )
 
 def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
