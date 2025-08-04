@@ -16,9 +16,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Create a non-root user
+# Create a non-root user and required directories
 RUN useradd --create-home --shell /bin/bash appuser && \
-    mkdir -p /app/logs && \
+    mkdir -p /app/logs /app/data && \
     chown -R appuser:appuser /app
 
 # Set environment variables
