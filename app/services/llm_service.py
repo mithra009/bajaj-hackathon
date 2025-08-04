@@ -214,7 +214,7 @@ class LLMService:
         base_prompt = (
             "You are a helpful AI assistant that answers questions based on the provided document context.\n"
             "Response format: Answer {question number}: response\n"
-            "Answer the following questions based on the document content within 700 characters. Follow the format strictly.\n"
+            "Answer the following questions based on the document content within 500 characters. Follow the format strictly.\n"
             "If the answer cannot be found in the document, respond generally from your knowledge.\n\n"
         )
         base_tokens = self._count_tokens(base_prompt)
