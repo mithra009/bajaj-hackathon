@@ -18,25 +18,17 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import json
 from pathlib import Path
+import os
+from dotenv import load_dotenv
 from .query_logger import query_logger
 
-# Path to store the last used key index
-KEY_INDEX_FILE = Path("/app/data/api_key_index.json")
+# Load environment variables from .env file
+load_dotenv()
 
-# List of API keys
-API_KEYS = [
-    "AIzaSyDYcPiSrwKjg0FR8SRWc9klIMJBgZcCBIs",
-    "AIzaSyApf7agiEaqNYMAAybRe-W_66Vqfj9O2JI",
-    "AIzaSyCkbXnbOAutppKV_-aotdM1IuRiM9ik7_I",
-    "AIzaSyBiO_O0xvH1cUW-8atzyw9J1eTy_ZSYy6M",
-    "AIzaSyDwMjUyE0roBeCdQiqVDA-odChXlU6FssM",
-    "AIzaSyDsYwB6GexlsQqdB_YWrnZH5e6foE4CFBg",
-    "AIzaSyCtV8k4-J_4lmwE4aL4dRQsSt63Iq-gAmo",
-    "AIzaSyBdUY5Vn0ZbbgqLlURsaCJNzpV1CiFwKeE",
-    "AIzaSyBNsBJr0Nnh0jWS37ZiX9g7gvyls5SFLpM",
-    "AIzaSyAIEMcIJrils1DXLweKai6T6Dz2agzQF-0",
-    "AIzaSyDYiPfw55zlRZgWJKrYWdYzqyt1wueB-kE",
-]
+# Get API key from environment variable
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    raise ValueError("OPENAI_API_KEY environment variable not set")
 
 def get_next_key_index():
     """Get the next key index to use, with persistence."""
@@ -75,10 +67,7 @@ logger = logging.getLogger(__name__)
 
 class LLMService:
     def __init__(self):
-        """Initializes the LLMService with API key rotation."""
-        if not API_KEYS:
-            raise ValueError("No API keys provided in the API_KEYS list")
-            
+        """Initializes the LLMService with the API key from environment variable."""
         self.model_name = MODEL_NAME
         self.max_tokens = MAX_TOKENS
         self.executor = ThreadPoolExecutor(max_workers=5)  # For parallel processing
@@ -251,7 +240,7 @@ class LLMService:
         base_prompt = (
             "You are a helpful AI assistant that answers questions based on the provided document context.\n"
             "Response format: Answer {question number}: response\n"
-            "Answer the following questions based on the document content within 1000 characters. Follow the format strictly.\n"
+            "Answer the following questions based on the document content within 700 characters. Follow the format strictly.\n"
             "If the answer cannot be found in the document, respond generally from your knowledge.\n\n"
         )
         base_tokens = self._count_tokens(base_prompt)
