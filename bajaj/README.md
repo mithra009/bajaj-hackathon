@@ -1,18 +1,13 @@
-# LLM Query API
-
-A FastAPI-based service for querying documents using Google's Gemini LLM with semantic search capabilities.
-
-## Features
-- Document querying via URL
-- Multiple question support in a single request
-- **Semantic search using all-MiniLM-L6-v2 embeddings**
-- **Intelligent document chunking and retrieval**
-- **Parallel processing with asyncio**
-- **Local caching with automatic cleanup**
-- Secure API key authentication
-- Docker containerization
-
-## Setup
+---
+title: {{title}}
+emoji: {{emoji}}
+colorFrom: {{colorFrom}}
+colorTo: {{colorTo}}
+sdk: {{sdk}}
+sdk_version: "{{sdkVersion}}"
+app_file: app.py
+pinned: false
+---
 
 1. Clone the repository:
    ```bash
