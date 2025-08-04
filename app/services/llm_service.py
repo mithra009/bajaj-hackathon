@@ -32,27 +32,6 @@ if not OPENAI_API_KEY:
 # Configure OpenAI client
 openai.api_key = OPENAI_API_KEY
 
-def get_next_key_index():
-    """Get the next key index to use, with persistence."""
-    try:
-        if KEY_INDEX_FILE.exists():
-            with open(KEY_INDEX_FILE, 'r') as f:
-                data = json.load(f)
-                last_index = data.get('last_index', -1)
-        else:
-            last_index = -1
-            
-        next_index = (last_index + 1) % len(API_KEYS)
-        
-        # Save the next index for future use
-        with open(KEY_INDEX_FILE, 'w') as f:
-            json.dump({'last_index': next_index}, f)
-            
-        return next_index
-    except Exception as e:
-        logger.error(f"Error managing key index: {str(e)}")
-        return 0  # Fallback to first key
-
 # Import configuration
 from app.config import MODEL_NAME, MAX_TOKENS, MAX_QUERIES_PER_BATCH
 
@@ -395,36 +374,23 @@ class LLMService:
             query_batches = [queries[i:i + MAX_QUERIES_PER_BATCH] 
                           for i in range(0, len(queries), MAX_QUERIES_PER_BATCH)]
             
-            # Create a list to store batch tasks with their assigned API keys
+            # Create a list to store batch tasks
             batch_tasks = []
-            used_keys = set()
             
             for batch_num, batch in enumerate(query_batches, 1):
-                # Get an available API key that hasn't been used in this request
-                available_keys = [k for k in API_KEYS if k not in used_keys]
-                if not available_keys:
-                    # If we've used all keys, clear the set and start reusing them
-                    used_keys.clear()
-                    available_keys = API_KEYS.copy()
-                
-                batch_key = random.choice(available_keys)
-                used_keys.add(batch_key)
-                
                 # Create metadata for this batch
                 batch_metadata = {
                     **query_metadata,
                     "batch_num": batch_num,
                     "total_batches": len(query_batches),
-                    "queries_in_batch": len(batch),
-                    "api_key_used": f"...{batch_key[-4:]}"
+                    "queries_in_batch": len(batch)
                 }
                 
-                # Create a task for this batch with its own LLMService instance
-                task = self._process_batch_with_key(
+                # Create a task for this batch
+                task = self._process_batch(
                     batch, 
-                    document_text,  # Pass the extracted text
-                    batch_metadata, 
-                    batch_key
+                    document_text,
+                    batch_metadata
                 )
                 batch_tasks.append(task)
             
