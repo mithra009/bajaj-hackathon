@@ -15,8 +15,8 @@ RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries \
 WORKDIR /app
 
 # Install system dependencies with retries
-RUN --mount=type=cache,target=/var/cache/apt \
-    --mount=type=cache,target=/var/lib/apt \
+RUN --mount=type=cache,id=apt-cache,target=/var/cache/apt \
+    --mount=type=cache,id=apt-lib,target=/var/lib/apt \
     apt-get update && \
     apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -40,7 +40,7 @@ ENV PYTHONUNBUFFERED=1
 
 # Install Python dependencies with retries and cache
 COPY requirements.txt .
-RUN --mount=type=cache,target=/root/.cache/pip \
+RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
     pip install --user --no-cache-dir \
     --retries 5 \
     --timeout 60 \
@@ -58,8 +58,8 @@ RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries \
     && echo 'Acquire::https::Timeout "120";' >> /etc/apt/apt.conf.d/80-retries
 
 # Install runtime dependencies with retries
-RUN --mount=type=cache,target=/var/cache/apt \
-    --mount=type=cache,target=/var/lib/apt \
+RUN --mount=type=cache,id=apt-cache-runtime,target=/var/cache/apt \
+    --mount=type=cache,id=apt-lib-runtime,target=/var/lib/apt \
     apt-get update && \
     apt-get install -y --no-install-recommends \
     libgomp1 \
