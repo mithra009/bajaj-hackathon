@@ -5,18 +5,20 @@
 FROM python:3.11-slim@sha256:2c5f9c323c381d5439d80f8f7d8b5e0c0f1e1f3b1c1d1f0a1b3c1d1f0a1b3c1d AS builder
 
 # Configure apt retries
-RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries \
-    && echo 'Acquire::http::Timeout "120";' >> /etc/apt/apt.conf.d/80-retries \
-    && echo 'Acquire::https::Timeout "120";' >> /etc/apt/apt.conf.d/80-retries \
-    && echo 'Acquire::http::Pipeline-Depth 0;' >> /etc/apt/apt.conf.d/80-retries \
-    && echo 'Acquire::http::No-Cache true;' >> /etc/apt/apt.conf.d/80-retries \
-    && echo 'Acquire::BrokenProxy true;' >> /etc/apt/apt.conf.d/80-retries
+# CORRECTED: Combined into a single, valid RUN command
+RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries && \
+    echo 'Acquire::http::Timeout "120";' >> /etc/apt/apt.conf.d/80-retries && \
+    echo 'Acquire::https::Timeout "120";' >> /etc/apt/apt.conf.d/80-retries && \
+    echo 'Acquire::http::Pipeline-Depth 0;' >> /etc/apt/apt.conf.d/80-retries && \
+    echo 'Acquire::http::No-Cache true;' >> /etc/apt/apt.conf.d/80-retries && \
+    echo 'Acquire::BrokenProxy true;' >> /etc/apt/apt.conf.d/80-retries
 
 WORKDIR /app
 
 # Install system dependencies with cache mounts
-RUN --mount=type=cache,id=apt-cache,target=/var/cache/apt \
-    --mount=type=cache,id=apt-lib,target=/var/lib/apt \
+# FIXED: Prefixed cache mount IDs
+RUN --mount=type=cache,id=doc-query-api-apt-cache,target=/var/cache/apt \
+    --mount=type=cache,id=doc-query-api-apt-lib,target=/var/lib/apt \
     apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -39,7 +41,8 @@ ENV PYTHONPATH=/app \
 
 # Install Python dependencies with pip cache mount
 COPY requirements.txt .
-RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
+# FIXED: Prefixed cache mount ID
+RUN --mount=type=cache,id=doc-query-api-pip-cache,target=/root/.cache/pip \
     pip install --user --no-cache-dir --retries 5 --timeout 60 -r requirements.txt
 
 # =================
@@ -48,15 +51,17 @@ RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
 FROM python:3.11-slim@sha256:2c5f9c323c381d5439d80f8f7d8b5e0c0f1e1f3b1c1d1f0a1b3c1d1f0a1b3c1d
 
 # Configure apt retries
-RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries \
-    && echo 'Acquire::http::Timeout "120";' >> /etc/apt/apt.conf.d/80-retries \
-    && echo 'Acquire::https::Timeout "120";' >> /etc/apt/apt.conf.d/80-retries
+# CORRECTED: Combined into a single, valid RUN command
+RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries && \
+    echo 'Acquire::http::Timeout "120";' >> /etc/apt/apt.conf.d/80-retries && \
+    echo 'Acquire::https::Timeout "120";' >> /etc/apt/apt.conf.d/80-retries
 
 WORKDIR /app
 
 # Install runtime deps (including curl for healthcheck)
-RUN --mount=type=cache,id=apt-cache-runtime,target=/var/cache/apt \
-    --mount=type=cache,id=apt-lib-runtime,target=/var/lib/apt \
+# FIXED: Prefixed cache mount IDs
+RUN --mount=type=cache,id=doc-query-api-apt-cache-runtime,target=/var/cache/apt \
+    --mount=type=cache,id=doc-query-api-apt-lib-runtime,target=/var/lib/apt \
     apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         libgomp1 \
@@ -88,7 +93,11 @@ ENV PATH=/root/.local/bin:$PATH \
 COPY --chown=appuser:appuser app ./app
 
 # Create directories and make entrypoint executable
-RUN mkdir -p /app/logs /app/cache && chmod +x /app/docker-entrypoint.sh && chown -R appuser:appuser /app
+# Note: The original Dockerfile references a docker-entrypoint.sh which was not provided.
+# This command assumes that file exists in your app directory.
+RUN mkdir -p /app/logs /app/cache && \
+    chmod +x /app/docker-entrypoint.sh && \
+    chown -R appuser:appuser /app
 
 EXPOSE 8000
 
