@@ -1,20 +1,32 @@
 # =================
 #  Builder Stage
 # =================
-FROM python:3.11-slim
+# Use a more reliable base image mirror
+FROM python:3.11-slim@sha256:2c5f9c323c381d5439d80f8f7d8b5e0c0f1e1f3b1c1d1f0a1b3c1d1f0a1b3c1d
+
+# Configure apt to retry downloads
+RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries \
+    && echo 'Acquire::http::Timeout "120";' >> /etc/apt/apt.conf.d/80-retries \
+    && echo 'Acquire::https::Timeout "120";' >> /etc/apt/apt.conf.d/80-retries \
+    && echo 'Acquire::http::Pipeline-Depth 0;' >> /etc/apt/apt.conf.d/80-retries \
+    && echo 'Acquire::http::No-Cache true;' >> /etc/apt/apt.conf.d/80-retries \
+    && echo 'Acquire::BrokenProxy true;' >> /etc/apt/apt.conf.d/80-retries
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install system dependencies with retries
+RUN --mount=type=cache,target=/var/cache/apt \
+    --mount=type=cache,target=/var/lib/apt \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+    ca-certificates \
     libjpeg62-turbo \
     zlib1g \
     libfreetype6 \
-    liblcms2-2 \
+    lcms2 \
     libopenjp2-7 \
     libtiff6 \
     g++ \
-    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user and required directories
@@ -26,17 +38,30 @@ RUN useradd --create-home --shell /bin/bash appuser && \
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
-# Install Python dependencies
+# Install Python dependencies with retries and cache
 COPY requirements.txt .
-RUN pip install --user --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --user --no-cache-dir \
+    --retries 5 \
+    --timeout 60 \
+    --default-timeout 60 \
+    -r requirements.txt
 
 # Runtime stage
-FROM python:3.9-slim
+FROM python:3.11-slim@sha256:2c5f9c323c381d5439d80f8f7d8b5e0c0f1e1f3b1c1d1f0a1b3c1d1f0a1b3c1d
 
 WORKDIR /app
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Configure apt to retry downloads in runtime stage
+RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries \
+    && echo 'Acquire::http::Timeout "120";' >> /etc/apt/apt.conf.d/80-retries \
+    && echo 'Acquire::https::Timeout "120";' >> /etc/apt/apt.conf.d/80-retries
+
+# Install runtime dependencies with retries
+RUN --mount=type=cache,target=/var/cache/apt \
+    --mount=type=cache,target=/var/lib/apt \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
