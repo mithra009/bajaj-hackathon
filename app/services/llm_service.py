@@ -143,7 +143,7 @@ class LLMService:
 {context}
 --- End Extract ---
 
-Now answer the following question *clearly and concisely*. If necessary, you can add some general industry-standard medical insurance knowledge — but prioritize using the extract:
+Now answer the following question *clearly and concisely*. If necessary, you can add some general industry-standard medical insurance knowledge — but prioritize using the extract, response should be a paragraph within 700 characters only:
 
 *Question:* {query}
 """
@@ -396,6 +396,8 @@ Now answer the following question *clearly and concisely*. If necessary, you can
                 generation_config={
                     "temperature": 0.3,
                     "max_output_tokens": self.max_tokens,
+                    "top_p": 0.95,
+                    "top_k": 40
                 },
                 safety_settings={
                     HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
@@ -406,12 +408,28 @@ Now answer the following question *clearly and concisely*. If necessary, you can
             )
             
             # Extract and return the response text
-            if hasattr(response, 'text'):
-                return response.text.strip()
-            elif hasattr(response, 'parts'):
-                return ' '.join(part.text for part in response.parts if hasattr(part, 'text')).strip()
-            else:
-                raise ValueError("Unexpected response format from Gemini API")
+            try:
+                if not response or not response.candidates:
+                    raise ValueError("Empty response from Gemini API")
+                
+                # Get the first candidate's content
+                candidate = response.candidates[0]
+                if not candidate.content or not candidate.content.parts:
+                    raise ValueError("No content parts in response")
+                
+                # Join all text parts
+                response_text = "".join(part.text for part in candidate.content.parts if hasattr(part, 'text') and part.text)
+                
+                if not response_text:
+                    raise ValueError("No text content in response")
+                    
+                return response_text.strip()
+                
+            except Exception as e:
+                logger.error(f"Error processing Gemini API response: {str(e)}")
+                if hasattr(response, 'prompt_feedback') and response.prompt_feedback.block_reason:
+                    raise ValueError(f"Content blocked: {response.prompt_feedback.block_reason}")
+                raise
                 
         except Exception as e:
             logger.warning(f"API call failed with key ending in {current_key[-4:]}: {str(e)}")
