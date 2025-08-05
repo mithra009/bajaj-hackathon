@@ -96,7 +96,7 @@ class LLMService:
         self.current_key_index = 0
         logger.info(f"Initialized with {len(self.gemini_api_keys)} Gemini API keys")
         self.model_name = "gemini-2.5-flash-lite"
-        self.max_tokens = 4096
+        self.max_tokens = 8196
         self.executor = ThreadPoolExecutor(max_workers=5)  # For parallel processing
         logger.info("Initializing LLMService with Gemini Flash Lite model")
         self._setup_genai()

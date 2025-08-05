@@ -3,9 +3,10 @@ import logging
 import time
 import json
 import uvicorn
+import requests
 from pathlib import Path
 from datetime import datetime
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Optional, Dict, Any, Union, Type
 
 from fastapi import FastAPI, HTTPException, Depends, status, Request, Body, BackgroundTasks
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -13,6 +14,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, HttpUrl, Field, validator
 from dotenv import load_dotenv
+
+# Define RateLimitError for compatibility
+class RateLimitError(Exception):
+    """Raised when the API request hits a rate limit."""
+    pass
 
 # Load environment variables first
 load_dotenv()
@@ -160,11 +166,38 @@ async def query_document(
         
         return results
         
+    except RateLimitError as e:
+        logger.warning(f"Rate limit exceeded: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "error": "rate_limit_exceeded",
+                "message": "API rate limit exceeded. Please try again later.",
+                "details": str(e)
+            }
+        )
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Network error during API call: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": "service_unavailable",
+                "message": "Service temporarily unavailable. Please try again later.",
+                "details": str(e)
+            }
+        )
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
-        logger.error(f"Error processing query: {str(e)}", exc_info=True)
+        logger.error(f"Unexpected error processing query: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error processing query: {str(e)}"
+            detail={
+                "error": "internal_server_error",
+                "message": "An unexpected error occurred while processing your request.",
+                "details": str(e) if app.debug else None
+            }
         )
 
 @app.get("/")

@@ -21,7 +21,7 @@ requests==2.28.2
 httpx==0.24.1
 
 # OpenAI
-openai==0.27.8
+openai>=0.28.1,<1.0.0
 
 # Data Processing
 numpy==1.24.3
