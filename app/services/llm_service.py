@@ -13,7 +13,7 @@ import re
 import fitz  # PyMuPDF
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
+from google.generativeai.types import HarmCategory, HarmBlockThreshold, generation
 from dotenv import load_dotenv
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
@@ -51,7 +51,6 @@ logger = logging.getLogger(__name__)
 class LLMService:
     def __init__(self):
         """Initializes the LLMService."""
-        # --- Model and Key Setup ---
         self.gemini_api_keys = GEMINI_KEYS
         self.model_name = "gemini-2.5-flash-lite"
         self.embedding_model = "text-embedding-3-small"
@@ -149,15 +148,30 @@ class LLMService:
             try:
                 genai.configure(api_key=key)
                 model = genai.GenerativeModel(self.model_name)
+                
+                # --- FIX: Correctly defined safety settings to prevent blocking ---
+                safety_settings = {
+                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                }
+
                 response = await model.generate_content_async(
                     prompt,
                     generation_config={"temperature": 0.3, "max_output_tokens": self.max_tokens},
-                    safety_settings={category: HarmBlockThreshold.BLOCK_NONE for category in HarmCategory}
+                    safety_settings=safety_settings
                 )
                 return response.text.strip()
+            
+            # --- IMPROVEMENT: More specific error handling for blocked prompts ---
+            except generation.BlockedPromptError as e:
+                logger.error(f"Request was blocked by Gemini API with key ...{key[-4:]}. Reason: {e}")
+                last_error = e
             except Exception as e:
                 logger.warning(f"API call failed with key ...{key[-4:]}: {e}")
                 last_error = e
+
         raise Exception(f"All API keys failed. Last error: {last_error}")
 
     async def _process_batch(self, batch_data: List[Tuple[str, int, List[str]]], semaphore: asyncio.Semaphore) -> Dict[str, str]:
@@ -177,33 +191,27 @@ class LLMService:
             return {}
 
         try:
-            # 1. Download and chunk document
             pdf_bytes = await asyncio.to_thread(self._download_pdf, document_link)
             doc_chunks = await asyncio.to_thread(self.extract_chunks, pdf_bytes)
             if not doc_chunks:
                 raise ValueError("Failed to extract text chunks from the document.")
 
-            # 2. Get embeddings using OpenAI
             doc_embeddings = np.array(await self._get_embeddings(doc_chunks))
             query_embeddings = await self._get_embeddings(queries)
 
-            # 3. For each query, find its relevant context
             query_data_with_context = []
             for i, query in enumerate(queries):
                 query_emb = query_embeddings[i]
                 relevant_chunks = self._find_top_chunks(query_emb, doc_embeddings, doc_chunks)
                 query_data_with_context.append((query, i, relevant_chunks))
 
-            # 4. Split queries into batches
             batch_size = 15
             batches = [query_data_with_context[i:i + batch_size] for i in range(0, len(query_data_with_context), batch_size)]
             
-            # 5. Process batches concurrently
             semaphore = asyncio.Semaphore(len(self.gemini_api_keys))
             batch_tasks = [self._process_batch(batch, semaphore) for batch in batches]
             batch_results = await asyncio.gather(*batch_tasks)
 
-            # 6. Combine results
             final_responses = {}
             for result_dict in batch_results:
                 final_responses.update(result_dict)
