@@ -72,7 +72,7 @@ class LLMService:
     def __init__(self):
         """Initializes the LLMService."""
         self.gemini_api_keys = GEMINI_KEYS
-        self.model_name = "gemini-2.5-flash-lits"
+        self.model_name = "gemini-2.5-flash-lite"
         self.embedding_model = "text-embedding-3-small"
         
         if not OPENAI_API_KEY:
@@ -89,34 +89,57 @@ class LLMService:
     def _prepare_rag_prompt_for_all_queries(self, queries_with_context: List[Tuple[str, List[str]]]) -> str:
         """Prepares a single prompt containing all queries and their respective relevant chunks."""
         prompt_parts = [
-            "You are a smart assistant helping a user extract information from a policy PDF.",
-            "For each question below, use ONLY the provided 'Relevant Context' to answer clearly, concisely, and truthfully.",
-            "If a question is unrelated to the document, provide a general answer. Do not say 'Not available'.",
-            "\n--- BATCH OF QUESTIONS WITH RELEVANT CONTEXT ---\n"
+            "You are a helpful assistant providing clear, concise answers from the given context.",
+            "IMPORTANT: Respond in simple paragraphs without markdown formatting.",
+            "For each question, use ONLY the provided context to answer. If the context doesn't contain the answer, provide a general response.",
+            "\n--- QUESTIONS AND CONTEXT ---\n"
         ]
 
         for i, (query, context_chunks) in enumerate(queries_with_context, 1):
-            context_str = "\n---\n".join(context_chunks)
-            prompt_parts.append(f"### Query {i}: {query}")
-            prompt_parts.append(f"--- Relevant Context for Query {i} ---\n{context_str}")
-            prompt_parts.append(f"--- End Context for Query {i} ---\n")
+            context_str = "\n".join(context_chunks)
+            prompt_parts.append(f"QUESTION {i}: {query}")
+            prompt_parts.append(f"CONTEXT: {context_str}")
+            prompt_parts.append("")
 
         prompt_parts.append(
-            "Now, provide the answers for all queries above within 1200 characters in a numbered list corresponding to the query number. For example:\n"
-            "1. [Your answer to Query 1]\n"
-            "2. [Your answer to Query 2]\n"
+            "Provide clear, concise answers for each question in order. "
+            "Start each answer with the question number followed by a colon. "
+            "Keep each answer under 200 characters. "
+            "Example:\n"
+            "1: [Answer to question 1]\n"
+            "2: [Answer to question 2]"
         )
         return "\n".join(prompt_parts)
 
     def _parse_llm_response(self, response_text: str, num_queries: int) -> Dict[str, str]:
-        """Parses the LLM's numbered list response into a dictionary."""
+        """Parses the LLM's response into a dictionary, handling various formats."""
         responses = {}
-        answer_lines = re.findall(r"^\s*(\d+)\.\s*(.*)", response_text, re.MULTILINE)
-        parsed_answers = {int(num): text.strip() for num, text in answer_lines}
-
+        # Try different patterns to extract answers
+        patterns = [
+            r"^\s*(\d+)[:\.]\s*(.*?)(?=\n\s*\d+[:.]|\Z)",  # Number: or Number. followed by text until next number or end
+            r"^\s*(\d+)[\)]\s*(.*?)(?=\n\s*\d+[\)]|\Z)",  # Number) followed by text
+            r"^\s*(\d+)\s*[-]\s*(.*?)(?=\n\s*\d+\s*[-]|\Z)"  # Number - text
+        ]
+        
+        parsed_answers = {}
+        for pattern in patterns:
+            if not parsed_answers:  # Only try next pattern if previous ones didn't work
+                matches = re.finditer(pattern, response_text, re.MULTILINE | re.DOTALL)
+                parsed_answers = {int(m.group(1)): m.group(2).strip() for m in matches}
+        
+        # Fallback: Split by lines and try to match any line starting with a number
+        if not parsed_answers:
+            for line in response_text.split('\n'):
+                match = re.match(r"^\s*(\d+)[:\.\s]+(.*)", line)
+                if match:
+                    parsed_answers[int(match.group(1))] = match.group(2).strip()
+        
+        # Generate responses with better fallback messages
         for i in range(num_queries):
             query_num = i + 1
-            answer = parsed_answers.get(query_num, f"Error: No answer found for question {query_num} in the response.")
+            answer = parsed_answers.get(query_num)
+            if not answer or len(answer) < 5:  # Very short answer might be invalid
+                answer = "The information for this question could not be determined from the provided context."
             responses[str(query_num)] = answer
             
         return responses
@@ -157,21 +180,28 @@ class LLMService:
         """Calls the Gemini model with a single, specific API key."""
         try:
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel(self.model_name)
-            
-            safety_settings = {
-                HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-                HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-                HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-            }
-
-            response = await model.generate_content_async(
-                prompt,
-                generation_config={"temperature": 0.2, "max_output_tokens": self.max_tokens},
-                safety_settings=safety_settings
+            model = genai.GenerativeModel(
+                self.model_name,
+                generation_config={
+                    "temperature": 0.1,  # Lower temperature for more focused answers
+                    "max_output_tokens": 2048,  # Reduced from max to speed up response
+                    "top_p": 0.9,
+                    "top_k": 40
+                },
+                safety_settings={
+                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                }
             )
-            return response.text.strip()
+
+            # Add timeout to prevent hanging
+            response = await asyncio.wait_for(
+                model.generate_content_async(prompt),
+                timeout=30.0  # 30 second timeout
+            )
+            return response.text.strip() if response.text else "No response generated"
         except Exception as e:
             logger.error(f"API call failed with key ...{api_key[-4:]}: {e}")
             raise Exception(f"Gemini API call failed: {e}")
