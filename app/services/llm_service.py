@@ -74,7 +74,7 @@ def get_next_key_index():
         else:
             last_index = -1
             
-        next_index = (last_index + 1) % len(API_KEYS)
+        next_index = (last_index + 1) % len(GEMINI_KEYS)
         
         # Save the next index for future use
         with open(KEY_INDEX_FILE, 'w') as f:
