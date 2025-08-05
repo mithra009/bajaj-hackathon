@@ -80,7 +80,7 @@ app.add_middleware(
 
 class QueryRequest(BaseModel):
     document_url: HttpUrl = Field(..., description="URL of the document to query")
-    queries: List[str] = Field(..., min_items=1, max_items=20, description="List of questions to ask about the document")
+    queries: List[str] = Field(..., min_items=1, max_items=200, description="List of questions to ask about the document")
     timeout: Optional[int] = Field(30, ge=5, le=300, description="Timeout in seconds for the query operation")
     
     class Config:
@@ -94,7 +94,7 @@ class QueryRequest(BaseModel):
                 "timeout": 30
             }
         }
-    questions: List[str]
+        questions: List[str]
 
 class QueryResponse(BaseModel):
     answers: List[str]
