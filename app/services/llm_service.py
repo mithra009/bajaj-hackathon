@@ -19,8 +19,24 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from sklearn.metrics.pairwise import cosine_similarity
 import openai
-from openai import RateLimitError, APIError, APITimeoutError, APIConnectionError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, retry_if_exception
+
+# Define custom exceptions for better error handling
+class RateLimitError(Exception):
+    """Raised when the API rate limit is exceeded"""
+    pass
+
+class APIError(Exception):
+    """Base class for other API-related exceptions"""
+    pass
+
+class APITimeoutError(APIError):
+    """Raised when the API request times out"""
+    pass
+
+class APIConnectionError(APIError):
+    """Raised when there's a connection error with the API"""
+    pass
 from .query_logger import query_logger
 from dotenv import load_dotenv
 
@@ -198,12 +214,7 @@ Now answer the following question *clearly and concisely*. If necessary, you can
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=4, max=10),
-        retry=(
-            retry_if_exception_type(RateLimitError) |
-            retry_if_exception_type(APIError) |
-            retry_if_exception_type(APITimeoutError) |
-            retry_if_exception_type(APIConnectionError)
-        ),
+        retry=retry_if_exception_type((RateLimitError, APIError, APITimeoutError, APIConnectionError)),
         reraise=True
     )
     async def _get_embeddings(self, texts: List[str], model: str = "text-embedding-3-small") -> List[List[float]]:
@@ -231,9 +242,18 @@ Now answer the following question *clearly and concisely*. If necessary, you can
                 input=texts
             )
             return [item.embedding for item in response.data]
-        except (RateLimitError, APIError, APITimeoutError, APIConnectionError) as e:
-            logger.warning(f"API error getting embeddings (will retry): {str(e)}")
-            raise
+        except openai.RateLimitError as e:
+            logger.warning(f"Rate limit exceeded: {str(e)}")
+            raise RateLimitError(str(e))
+        except openai.APITimeoutError as e:
+            logger.warning(f"API request timed out: {str(e)}")
+            raise APITimeoutError(str(e))
+        except openai.APIConnectionError as e:
+            logger.warning(f"API connection error: {str(e)}")
+            raise APIConnectionError(str(e))
+        except openai.APIError as e:
+            logger.warning(f"API error: {str(e)}")
+            raise APIError(str(e))
         except Exception as e:
             logger.error(f"Unexpected error getting embeddings: {str(e)}")
             raise APIError(f"Failed to get embeddings: {str(e)}")
@@ -297,6 +317,19 @@ Now answer the following question *clearly and concisely*. If necessary, you can
             logger.error(f"Error in _download_and_extract_text: {str(e)}", exc_info=True)
             return None, None
     
+    async def _process_chunk_with_semaphore(self, chunk: str, semaphore: asyncio.Semaphore) -> Optional[List[float]]:
+        """Process a chunk with a semaphore to limit concurrency."""
+        async with semaphore:
+            try:
+                # Get embedding for the chunk
+                embeddings = await self._get_embeddings([chunk])
+                if embeddings and len(embeddings) > 0:
+                    return embeddings[0]
+                return [0.0] * 1536  # Return zero vector if no embeddings
+            except Exception as e:
+                logger.error(f"Error processing chunk: {str(e)}")
+                return [0.0] * 1536  # Return zero vector on error
+
     async def process_document(self, document_link: str):
         """
         Asynchronously processes a document: downloads, extracts chunks, and generates embeddings.
@@ -333,117 +366,6 @@ Now answer the following question *clearly and concisely*. If necessary, you can
             error_msg = f"Error processing document {document_link}: {str(e)}"
             logger.error(error_msg, exc_info=True)
             return False, error_msg
-        except Exception as e:
-            error_msg = f"Error processing document: {str(e)}"
-            logger.error(error_msg)
-            logger.error(traceback.format_exc())
-            return False, error_msg
-            
-    async def _process_chunk_with_semaphore(self, chunk: str, semaphore: asyncio.Semaphore) -> Optional[List[float]]:
-        """Process a chunk with a semaphore to limit concurrency."""
-        async with semaphore:
-            try:
-                return await asyncio.get_event_loop().run_in_executor(
-                    self.executor,
-                    lambda: self._get_embeddings([chunk])[0]
-                )
-            except Exception as e:
-                logger.error(f"Error getting embedding for chunk: {str(e)}")
-                return None
-        if not self._is_valid_url(document_link):
-            return False, "Invalid document URL"
-            
-        logger.info(f"Downloading and processing document from: {document_link}")
-        
-        try:
-            # Run the synchronous download and extraction in a thread pool
-            loop = asyncio.get_event_loop()
-            chunks, embeddings = await loop.run_in_executor(
-                self.executor,
-                lambda: self._download_and_extract_text(document_link)
-            )
-            
-            if not chunks or not embeddings:
-                return False, "No text could be extracted from the document"
-                
-            logger.info(f"Successfully extracted {len(chunks)} chunks from document")
-            # Log first 500 characters of the extracted text for debugging
-            sample_text = chunks[0][:500].replace('\n', ' ').strip()
-            logger.info(f"Extracted text sample (first 500 chars): {sample_text}...")
-            return True, {'chunks': chunks, 'embeddings': embeddings}
-            
-        except Exception as e:
-            error_msg = f"Error processing document: {str(e)}"
-            logger.error(error_msg)
-            logger.error(traceback.format_exc())
-            return False, error_msg
-
-    async def _call_llm(self, prompt: str, retry_count: int = 0, used_keys: set = None) -> str:
-        """Calls the Gemini Flash Lite model with the given prompt and returns the response.
-        Uses round-robin API key rotation and handles rate limiting.
-        
-        Args:
-            prompt: The prompt to send to the LLM
-            retry_count: Number of retry attempts so far
-            used_keys: Set of API keys that have already been tried
-            
-        Returns:
-            The LLM response text
-            
-        Raises:
-            Exception: If all retry attempts fail
-        """
-        if used_keys is None:
-            used_keys = set()
-            
-        if len(used_keys) >= len(API_KEYS):
-            raise Exception("All API keys have been exhausted")
-            
-        # Get next available API key
-        current_key = None
-        for key in API_KEYS:
-            if key not in used_keys:
-                current_key = key
-                used_keys.add(key)
-                break
-                
-        if not current_key:
-            raise Exception("No available API keys")
-            
-        try:
-            # Configure Gemini with the current API key
-            genai.configure(api_key=current_key)
-            model = genai.GenerativeModel('gemini-1.5-flash-lite')
-            
-            # Generate content with error handling
-            response = await model.generate_content_async(
-                prompt,
-                generation_config={
-                    "temperature": 0.3,
-                    "max_output_tokens": 2048,
-                },
-                safety_settings={
-                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-                }
-            )
-            
-            # Extract and return the response text
-            if hasattr(response, 'text'):
-                return response.text.strip()
-            elif hasattr(response, 'parts'):
-                return ' '.join(part.text for part in response.parts if hasattr(part, 'text')).strip()
-            else:
-                raise ValueError("Unexpected response format from Gemini API")
-                
-        except Exception as e:
-            logger.warning(f"API call failed with key ending in {current_key[-4:]}: {str(e)}")
-            # If rate limited or other API error, try with next key
-            if retry_count < len(API_KEYS) - 1:
-                return await self._call_llm(prompt, retry_count + 1, used_keys)
-            raise
 
     async def _process_single_query(
         self, 
@@ -469,10 +391,115 @@ Now answer the following question *clearly and concisely*. If necessary, you can
         async with semaphore:
             try:
                 # Get query embedding
-                query_emb = await asyncio.get_event_loop().run_in_executor(
-                    self.executor,
-                    lambda: self._get_embeddings([query])[0]
-                )
+                query_emb = (await self._get_embeddings([query]))[0]
+                
+                # Find most relevant chunks
+                top_chunks = self._find_top_chunks(query, query_emb, chunk_embeddings, chunks)
+                
+                # Prepare prompt with context
+                prompt = self._prepare_prompt(query, top_chunks)
+                
+                # Call the LLM
+                response = await self._call_llm(prompt)
+                
+                return query_idx, response
+                
+            except Exception as e:
+                logger.error(f"Error processing query '{query}': {str(e)}")
+                return query_idx, f"Error processing query: {str(e)}"
+
+    async def _call_llm(self, prompt: str, retry_count: int = 0, used_keys: set = None) -> str:
+        """Calls the Gemini Flash Lite model with the given prompt and returns the response.
+        Uses round-robin API key rotation and handles rate limiting.
+        
+        Args:
+            prompt: The prompt to send to the LLM
+            retry_count: Number of retry attempts so far
+            used_keys: Set of API keys that have already been tried
+            
+        Returns:
+            The LLM response text
+            
+        Raises:
+            Exception: If all retry attempts fail
+        """
+        if used_keys is None:
+            used_keys = set()
+            
+        if len(used_keys) >= len(self.gemini_api_keys):
+            raise Exception("All API keys have been exhausted")
+            
+        # Get next available API key
+        current_key = None
+        for key in self.gemini_api_keys:
+            if key not in used_keys:
+                current_key = key
+                used_keys.add(key)
+                break
+                
+        if not current_key:
+            raise Exception("No available API keys")
+            
+        try:
+            # Configure Gemini with the current API key
+            genai.configure(api_key=current_key)
+            model = genai.GenerativeModel(self.model_name)
+            
+            # Generate content with error handling
+            response = await model.generate_content_async(
+                prompt,
+                generation_config={
+                    "temperature": 0.3,
+                    "max_output_tokens": self.max_tokens,
+                },
+                safety_settings={
+                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                }
+            )
+            
+            # Extract and return the response text
+            if hasattr(response, 'text'):
+                return response.text.strip()
+            elif hasattr(response, 'parts'):
+                return ' '.join(part.text for part in response.parts if hasattr(part, 'text')).strip()
+            else:
+                raise ValueError("Unexpected response format from Gemini API")
+                
+        except Exception as e:
+            logger.warning(f"API call failed with key ending in {current_key[-4:]}: {str(e)}")
+            # If rate limited or other API error, try with next key
+            if retry_count < len(self.gemini_api_keys) - 1:
+                return await self._call_llm(prompt, retry_count + 1, used_keys)
+            raise Exception(f"All API keys failed. Last error: {str(e)}")
+
+    async def _process_single_query(
+        self, 
+        query: str, 
+        query_idx: int, 
+        chunks: List[str], 
+        chunk_embeddings: List[List[float]],
+        semaphore: asyncio.Semaphore
+    ) -> Tuple[int, str]:
+        """
+        Process a single query asynchronously with its own API key.
+        
+        Args:
+            query: The query to process
+            query_idx: Index of the query
+            chunks: List of document chunks
+            chunk_embeddings: Embeddings for the document chunks
+            semaphore: Semaphore to limit concurrency
+            
+        Returns:
+            Tuple of (query_index, response)
+        """
+        async with semaphore:
+            try:
+                # Get query embedding
+                query_emb = (await self._get_embeddings([query]))[0]
                 
                 # Find most relevant chunks
                 top_chunks = self._find_top_chunks(query, query_emb, chunk_embeddings, chunks)
@@ -484,7 +511,7 @@ Now answer the following question *clearly and concisely*. If necessary, you can
                 return query_idx, response
                 
             except Exception as e:
-                logger.error(f"Error processing query {query_idx + 1}: {str(e)}")
+                logger.error(f"Error processing query {query_idx + 1}: {str(e)}", exc_info=True)
                 return query_idx, f"Error processing query: {str(e)}"
 
     async def process_queries(self, queries: List[str], document_link: str) -> Dict[str, str]:
