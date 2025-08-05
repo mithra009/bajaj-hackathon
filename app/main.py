@@ -45,16 +45,11 @@ app = FastAPI(
 
 # Security middleware
 security = HTTPBearer()
-API_KEY = os.getenv("API_KEY")
+# Use the provided authentication token
+API_KEY = "8e82ec704661cd0a075d882f71118212d2c09b96831696aea46f17519d96bcbf"
 
-if not API_KEY:
-    import warnings
-    warnings.warn(
-        "No API_KEY provided in environment variables. "
-        "Using default key which is not secure for production.",
-        UserWarning
-    )
-    API_KEY = "fd53cda9e372cc74319d047c60acdcc06e62e7e5550a92d842c425b82df84e4d"
+# Log the first and last 4 characters of the key for verification
+logger.info(f"Using API key: {API_KEY[:4]}...{API_KEY[-4:]}")
 
 def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
     """Verify the provided API key"""
