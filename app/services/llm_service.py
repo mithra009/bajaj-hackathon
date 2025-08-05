@@ -30,9 +30,11 @@ class APIError(Exception):
 # --- API KEY CONFIGURATION ---
 # Gemini API keys for generation
 GEMINI_KEYS = [
-    "AIzaSyBO54qUNvonF9dGr2Tx0zCmPZYAWF2dAPA",
-    "AIzaSyAhrjt-117-d0x5hmDn03_UWBtzgh46FHI",
-    "AIzaSyB9wLm1gln5Xw-earmB9RF-i1g5nl9QAEk",
+    "AIzaSyDRwSnA5trSGHSucMLUa5Yo_y43Q5bJ0wg",
+    "AIzaSyAHG_guIGql9JG5NaBiRQpHmEQ9O09Dfoo",
+    "AIzaSyBXVE_Zo_XsjvilpzVjugIe3wg9ZWe62vM",
+    "AIzaSyBCPf3_VWZBQ4tJPGE8fSM9MBXV70ccPLw",
+    "AIzaSyDR9Xw3WtwqlN2uB8SNMog9wpVfXtr7L9I"
 ]
 
 # OpenAI API key for embeddings
@@ -51,7 +53,7 @@ class LLMService:
         """Initializes the LLMService."""
         # --- Model and Key Setup ---
         self.gemini_api_keys = GEMINI_KEYS
-        self.model_name = "gemini-1.5-flash-latest"
+        self.model_name = "gemini-2.5-flash-lite"
         self.embedding_model = "text-embedding-3-small"
         
         if not OPENAI_API_KEY:
