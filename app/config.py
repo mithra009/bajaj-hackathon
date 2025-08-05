@@ -5,8 +5,12 @@ This module contains all the configuration parameters for the LLM service,
 including model settings, API configurations, and performance parameters.
 """
 import os
+import warnings
 from typing import List, Optional
-from pydantic import BaseSettings, HttpUrl, validator
+
+# Import BaseSettings from pydantic v1
+from pydantic import BaseSettings, validator
+from pydantic.networks import HttpUrl
 
 class Settings(BaseSettings):
     """Application settings and configurations."""
