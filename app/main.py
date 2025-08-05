@@ -79,26 +79,22 @@ app.add_middleware(
 )
 
 class QueryRequest(BaseModel):
-    document_url: HttpUrl = Field(..., description="URL of the document to query")
-    queries: List[str] = Field(..., min_items=1, max_items=200, description="List of questions to ask about the document")
-    timeout: Optional[int] = Field(30, ge=5, le=300, description="Timeout in seconds for the query operation")
+    documents: HttpUrl = Field(..., description="URL of the document to query")
+    questions: List[str] = Field(..., min_items=1, max_items=200, description="List of questions to ask about the document")
     
     class Config:
         schema_extra = {
             "example": {
-                "document_url": "https://example.com/insurance-policy.pdf",
-                "queries": [
+                "documents": "https://example.com/insurance-policy.pdf",
+                "questions": [
                     "What is the policy coverage for emergency hospitalization?",
                     "What is the claim submission process?"
-                ],
-                "timeout": 30
+                ]
             }
         }
-        questions: List[str]
 
 class QueryResponse(BaseModel):
     answers: List[str]
-
 
 class QueryLogResponse(BaseModel):
     id: str
@@ -145,18 +141,24 @@ async def query_document(
     
     try:
         # Process queries in parallel
-        results = await llm_service.process_queries(
-            queries=query_data.queries,
-            document_link=str(query_data.document_url)
+        results_dict = await llm_service.process_queries(
+            queries=query_data.questions,
+            document_link=str(query_data.documents)
         )
+        
+        # Sort results by query index ("1", "2", ...) and extract answers
+        sorted_answers = [results_dict[str(i)] for i in sorted(results_dict.keys(), key=int)]
+        
+        # Prepare the final response object
+        response_data = QueryResponse(answers=sorted_answers)
         
         # Log the successful query
         if background_tasks:
             background_tasks.add_task(
                 query_logger.log_query,
-                document_link=str(query_data.document_url),
-                queries=query_data.queries,
-                responses=results,
+                document_link=str(query_data.documents),
+                queries=query_data.questions,
+                responses=results_dict,
                 metadata={
                     "processing_time": time.time() - start_time,
                     "client_ip": request.client.host if request.client else None,
@@ -164,7 +166,7 @@ async def query_document(
                 }
             )
         
-        return results
+        return response_data
         
     except RateLimitError as e:
         logger.warning(f"Rate limit exceeded: {str(e)}")
@@ -209,7 +211,7 @@ async def root():
         "endpoints": {
             "document_query": {
                 "method": "POST",
-                "path": "/query",
+                "path": "/hackrx/run",
                 "description": "Query documents with a list of questions"
             },
             "health": {

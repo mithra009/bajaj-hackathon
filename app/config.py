@@ -32,9 +32,8 @@ class Settings(BaseModel):
     CORS_ORIGINS: List[str] = os.getenv("CORS_ORIGINS", "*").split(",")
     
     # Model configuration
-    MODEL_NAME: str = os.getenv("MODEL_NAME", "gemini-2.5-flash-latest")
-    MAX_TOKENS: int = int(os.getenv("MAX_TOKENS", " 8196"))
-    MAX_CONTEXT_LENGTH: int = int(os.getenv("MAX_CONTEXT_LENGTH", "4000"))
+    MODEL_NAME: str = os.getenv("MODEL_NAME", "gemini-1.5-flash-latest")
+    MAX_TOKENS: int = int(os.getenv("MAX_TOKENS", "8196"))
     TEMPERATURE: float = float(os.getenv("TEMPERATURE", "0.3"))
     TOP_P: float = float(os.getenv("TOP_P", "0.95"))
     TOP_K: int = int(os.getenv("TOP_K", "40"))
