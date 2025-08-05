@@ -14,9 +14,9 @@ RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries \
 
 WORKDIR /app
 
-# Install system dependencies with cache mounts (let BuildKit manage cache via target)
-RUN --mount=type=cache,target=/var/cache/apt \
-    --mount=type=cache,target=/var/lib/apt \
+# Install system dependencies with cache mounts
+RUN --mount=type=cache,id=apt-cache,target=/var/cache/apt \
+    --mount=type=cache,id=apt-lib,target=/var/lib/apt \
     apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -39,7 +39,7 @@ ENV PYTHONPATH=/app \
 
 # Install Python dependencies with pip cache mount
 COPY requirements.txt .
-RUN --mount=type=cache,target=/root/.cache/pip \
+RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
     pip install --user --no-cache-dir --retries 5 --timeout 60 -r requirements.txt
 
 # =================
@@ -55,8 +55,8 @@ RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries \
 WORKDIR /app
 
 # Install runtime deps (including curl for healthcheck)
-RUN --mount=type=cache,target=/var/cache/apt \
-    --mount=type=cache,target=/var/lib/apt \
+RUN --mount=type=cache,id=apt-cache-runtime,target=/var/cache/apt \
+    --mount=type=cache,id=apt-lib-runtime,target=/var/lib/apt \
     apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         libgomp1 \
