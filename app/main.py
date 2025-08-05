@@ -1,35 +1,54 @@
-from fastapi import FastAPI, HTTPException, Depends, status, Request, Body
+from fastapi import FastAPI, HTTPException, Depends, status, Request, Body, BackgroundTasks
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
+from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, HttpUrl, Field
+from typing import List, Optional, Dict, Any, Union
 import uvicorn
 import time
 import os
+import logging
 from pathlib import Path
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('app.log')
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Ensure logs directory exists
 logs_dir = Path("logs")
-logs_dir.mkdir(exist_ok=True)
+logs_dir.mkdir(exist_ok=True, parents=True)
 
 # Security
 security = HTTPBearer()
-API_KEY = "fd53cda9e372cc74319d047c60acdcc06e62e7e5550a92d842c425b82df84e4d"
+API_KEY = os.getenv("API_KEY")
 
-app = FastAPI(
-    title="LLM Query API",
-    version="1.0.0",
-    description="API for querying documents using Google's Gemini LLM"
-)
+if not API_KEY:
+    import warnings
+    warnings.warn(
+        "No API_KEY provided in environment variables. "
+        "Using default key which is not secure for production.",
+        UserWarning
+    )
+    API_KEY = "fd53cda9e372cc74319d047c60acdcc06e62e7e5550a92d842c425b82df84e4d"
 
-def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
     """Verify the provided API key"""
     if credentials.credentials != API_KEY:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials",
+            detail="Invalid or missing API key",
             headers={"WWW-Authenticate": "Bearer"},
         )
     return credentials.credentials
@@ -47,7 +66,21 @@ app.add_middleware(
 )
 
 class QueryRequest(BaseModel):
-    documents: str
+    document_url: HttpUrl = Field(..., description="URL of the document to query")
+    queries: List[str] = Field(..., min_items=1, max_items=20, description="List of questions to ask about the document")
+    timeout: Optional[int] = Field(30, ge=5, le=300, description="Timeout in seconds for the query operation")
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "document_url": "https://example.com/insurance-policy.pdf",
+                "queries": [
+                    "What is the policy coverage for emergency hospitalization?",
+                    "What is the claim submission process?"
+                ],
+                "timeout": 30
+            }
+        }
     questions: List[str]
 
 class QueryResponse(BaseModel):
@@ -82,77 +115,50 @@ async def get_query_logs(limit: int = 100):
             detail=f"Failed to retrieve logs: {str(e)}"
         )
 
-@app.post("/hackrx/run", response_model=QueryResponse, dependencies=[Depends(verify_token)])
+@app.post("/query", response_model=Dict[str, str])
 async def query_document(
     request: Request,
-    query_data: QueryRequest = Body(...)
+    query_data: QueryRequest = Body(...),
+    background_tasks: BackgroundTasks = None,
+    _: str = Depends(verify_token)
 ):
     """
-    Query the LLM with a list of questions and a document link.
+    Query a document with multiple questions and get responses with minimal latency.
+    
+    This endpoint processes multiple queries in parallel using available API keys
+    and returns responses as soon as they're available.
     """
-    print("\n" + "="*50)
-    print("=== NEW REQUEST RECEIVED ===")
-    print(f"Document: {query_data.documents}")
-    print(f"Number of questions: {len(query_data.questions)}")
+    start_time = time.time()
     
     try:
-        start_time = time.time()
-        
-        # Log the request details
-        print("\n=== REQUEST DETAILS ===")
-        print(f"Document URL: {query_data.documents}")
-        print("\nQuestions:")
-        for i, question in enumerate(query_data.questions, 1):
-            print(f"  {i}. {question}")
-        
-        # Call the LLM service with additional metadata
-        print("\n=== CALLING LLM SERVICE ===")
-        client_host = request.client.host if request.client else "unknown"
-        user_agent = request.headers.get("user-agent", "unknown")
-        
-        responses = await llm_service.generate_response(
-            queries=query_data.questions,
-            document_link=query_data.documents,
-            metadata={
-                "source_ip": client_host,
-                "user_agent": user_agent
-            }
+        # Process queries in parallel
+        results = await llm_service.process_queries(
+            queries=query_data.queries,
+            document_link=str(query_data.document_url)
         )
         
-        # Process the responses
-        print("\n=== PROCESSING RESPONSES ===")
-        answers = []
-        for i in range(1, len(query_data.questions) + 1):
-            answer = responses.get(f"Query {i}", "No answer found")
-            answers.append(answer)
-            print(f"Answer {i}: {answer[:100]}..." if len(answer) > 100 else f"Answer {i}: {answer}")
+        # Log the successful query
+        if background_tasks:
+            background_tasks.add_task(
+                query_logger.log_query,
+                document_link=str(query_data.document_url),
+                queries=query_data.queries,
+                responses=results,
+                metadata={
+                    "processing_time": time.time() - start_time,
+                    "client_ip": request.client.host if request.client else None,
+                    "user_agent": request.headers.get("user-agent")
+                }
+            )
         
-        # Calculate processing time
-        processing_time = time.time() - start_time
-        print(f"\n=== REQUEST COMPLETED ===")
-        print(f"Total processing time: {processing_time:.2f} seconds")
-        print("="*50 + "\n")
-        
-        # Return the answers along with the log ID
-        return {
-            "answers": answers,
-            "log_id": responses.get("log_id")
-        }
-        
-    except HTTPException:
-        # Re-raise HTTP exceptions as they are
-        raise
+        return results
         
     except Exception as e:
-        error_msg = f"Unexpected error: {str(e)}"
-        print(f"\n=== ERROR ===\n{error_msg}")
-        import traceback
-        traceback.print_exc()
-        print("="*50 + "\n")
-        # Return empty answers array on error
-        return {"answers": []}
-
-
+        logger.error(f"Error processing query: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing query: {str(e)}"
+        )
 
 @app.get("/")
 async def root():
@@ -163,7 +169,7 @@ async def root():
         "endpoints": {
             "document_query": {
                 "method": "POST",
-                "path": "/hackrx/run",
+                "path": "/query",
                 "description": "Query documents with a list of questions"
             },
             "health": {
@@ -175,13 +181,29 @@ async def root():
         "documentation": "Add /docs to the URL for interactive API documentation"
     }
 
-@app.get("/health")
-async def health_check():
-    return {
-        "status": "ok",
-        "timestamp": datetime.utcnow().isoformat(),
-        "version": app.version
-    }
+@app.get("/health", include_in_schema=False)
+async def health_check() -> Dict[str, str]:
+    """
+    Health check endpoint for load balancers and monitoring.
+    
+    Returns:
+        Dict with status and timestamp
+    """
+    try:
+        # Basic health check - verify we can import and initialize the LLM service
+        from app.services.llm_service import llm_service
+        return {
+            "status": "healthy",
+            "timestamp": datetime.utcnow().isoformat(),
+            "service": "document-query-api",
+            "version": "1.0.0"
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service unavailable"
+        )
 
 if __name__ == "__main__":
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)

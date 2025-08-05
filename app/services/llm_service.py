@@ -1,7 +1,7 @@
 import os
 import asyncio
 import google.generativeai as genai
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Union
 from urllib.parse import urlparse
 import httpx
 import requests
@@ -12,35 +12,40 @@ import json
 import logging
 import fitz  # PyMuPDF
 import re 
+import numpy as np
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
-import json
-from pathlib import Path
+from sklearn.metrics.pairwise import cosine_similarity
+import openai
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from .query_logger import query_logger
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Path to store the last used key index
 KEY_INDEX_FILE = Path("/app/data/api_key_index.json")
 
-# List of API keys
-API_KEYS = [
-    "AIzaSyDYcPiSrwKjg0FR8SRWc9klIMJBgZcCBIs",
-    "AIzaSyApf7agiEaqNYMAAybRe-W_66Vqfj9O2JI",
-    "AIzaSyCkbXnbOAutppKV_-aotdM1IuRiM9ik7_I",
-    "AIzaSyBiO_O0xvH1cUW-8atzyw9J1eTy_ZSYy6M",
+# Hardcoded Gemini API keys
+GEMINI_KEYS = [
     "AIzaSyCtV8k4-J_4lmwE4aL4dRQsSt63Iq-gAmo",
     "AIzaSyBdUY5Vn0ZbbgqLlURsaCJNzpV1CiFwKeE",
     "AIzaSyBNsBJr0Nnh0jWS37ZiX9g7gvyls5SFLpM",
     "AIzaSyAIEMcIJrils1DXLweKai6T6Dz2agzQF-0",
-    "AIzaSyDYiPfw55zlRZgWJKrYWdYzqyt1wueB-kE",
-    "AIzaSyAcLhSQoDkl21TU-KSt-gQeYBnsdB6Z6Us",
-    "AIzaSyDSuF6W5nFHNvkFA1WsJNsuc9XSSeSN8zk",
-    "AIzaSyAbhjgML1-xGuKAtaU_HdY-r_97VU3T_M8",
-    "AIzaSyC0FHtPjc5rhs3_avBUtwn5itwY1PQRzRI",
-    "AIzaSyAQ_bs7cI1GH_yDnAU0SF7M4IaxjDT5m3o",
-    "AIzaSyD8DEINr8qD6-kVo5-jSb9wjm5v27X7zuY"
+    "AIzaSyAWnC5B0F3MvmTE5rUQY3Uh27BXh2KM4iU",
+    "AIzaSyDYiPfw55zlRZgWJKrYWdYzqyt1wueB-kE"
 ]
+
+# Get OpenAI API key from environment
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    raise ValueError("OPENAI_API_KEY environment variable is not set")
+
+# Configure OpenAI client
+openai.api_key = OPENAI_API_KEY
 
 def get_next_key_index():
     """Get the next key index to use, with persistence."""
@@ -80,19 +85,26 @@ logger = logging.getLogger(__name__)
 class LLMService:
     def __init__(self):
         """Initializes the LLMService with API key rotation."""
-        if not API_KEYS:
-            raise ValueError("No API keys provided in the API_KEYS list")
-            
-        self.model_name = MODEL_NAME
-        self.max_tokens = MAX_TOKENS
+        self.gemini_api_keys = [
+            "AIzaSyCtV8k4-J_4lmwE4aL4dRQsSt63Iq-gAmo",
+            "AIzaSyBdUY5Vn0ZbbgqLlURsaCJNzpV1CiFwKeE",
+            "AIzaSyBNsBJr0Nnh0jWS37ZiX9g7gvyls5SFLpM",
+            "AIzaSyAIEMcIJrils1DXLweKai6T6Dz2agzQF-0",
+            "AIzaSyAWnC5B0F3MvmTE5rUQY3Uh27BXh2KM4iU",
+            "AIzaSyDYiPfw55zlRZgWJKrYWdYzqyt1wueB-kE"
+        ]
+        self.current_key_index = 0
+        logger.info(f"Initialized with {len(self.gemini_api_keys)} Gemini API keys")
+        self.model_name = "gemini-2.5-flash-lite"
+        self.max_tokens = 4096
         self.executor = ThreadPoolExecutor(max_workers=5)  # For parallel processing
-        logger.info(f"Initializing LLMService with model: {self.model_name}")
+        logger.info("Initializing LLMService with Gemini Flash Lite model")
         self._setup_genai()
         
     def _get_next_api_key(self):
-        """Get the next API key using persistent rotation."""
+        """Get the next Gemini API key using persistent rotation."""
         key_index = get_next_key_index()
-        return API_KEYS[key_index]
+        return GEMINI_KEYS[key_index]
     
     def _setup_genai(self):
         """Setup the GenAI client with the next available API key."""
@@ -101,47 +113,238 @@ class LLMService:
         genai.configure(api_key=self.api_key)
         self.model = genai.GenerativeModel(self.model_name)
         
-    def _download_and_extract_text(self, url: str) -> str:
+    def _prepare_prompt(self, query: str, context_chunks: List[str]) -> str:
         """
-        Synchronously downloads a PDF from the given URL and extracts its text.
+        Prepares the structured prompt for the LLM with relevant context chunks.
+        
+        Args:
+            query: The user's query
+            context_chunks: List of relevant text chunks from the document
+            
+        Returns:
+            Formatted prompt string
+        """
+        context = "\n\n---\n".join(context_chunks)
+        prompt = f"""You are a helpful insurance assistant. Use the following policy information to answer the question.
+
+--- Policy Document Extract ---
+{context}
+--- End Extract ---
+
+Now answer the following question *clearly and concisely*. If necessary, you can add some general industry-standard medical insurance knowledge — but prioritize using the extract:
+
+*Question:* {query}
+"""
+        return prompt
+
+    def _is_valid_url(self, url: str) -> bool:
+        """Check if a URL is valid."""
+        try:
+            result = urlparse(url)
+            return all([result.scheme, result.netloc])
+        except ValueError:
+            return False
+
+    def _count_tokens(self, text: str) -> int:
+        """Estimate the number of tokens in the given text."""
+        # Rough estimate: 1 token ~= 4 characters for English text
+        return (len(text) + 3) // 4
+
+    def _download_pdf(self, url: str) -> bytes:
+        """
+        Download a PDF from the given URL.
+        
+        Args:
+            url: URL of the PDF to download
+            
+        Returns:
+            PDF content as bytes
+        """
+        try:
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            return response.content
+        except Exception as e:
+            logger.error(f"Error downloading PDF from {url}: {str(e)}")
+            raise
+
+    def extract_chunks(self, pdf_bytes: bytes, max_chars: int = 1000) -> List[str]:
+        """
+        Extract text chunks from PDF bytes.
+        
+        Args:
+            pdf_bytes: PDF content as bytes
+            max_chars: Maximum characters per chunk
+            
+        Returns:
+            List of text chunks
+        """
+        try:
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            chunks = []
+            for page in doc:
+                text = page.get_text()
+                text = text.strip().replace('\n', ' ')
+                for i in range(0, len(text), max_chars):
+                    chunk = text[i:i + max_chars]
+                    if len(chunk.split()) > 5:  # Skip very small chunks
+                        chunks.append(chunk)
+            return chunks
+        except Exception as e:
+            logger.error(f"Error extracting text from PDF: {str(e)}")
+            raise
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        retry=retry_if_exception_type((openai.RateLimitError, openai.APIError)),
+        reraise=True
+    )
+    def _get_embeddings(self, texts: List[str], model: str = "text-embedding-3-small") -> List[List[float]]:
+        """
+        Get embeddings for a list of texts using OpenAI API.
+        
+        Args:
+            texts: List of text chunks to embed
+            model: OpenAI embedding model to use
+            
+        Returns:
+            List of embeddings
+        """
+        try:
+            response = openai.embeddings.create(
+                model=model,
+                input=texts
+            )
+            return [item.embedding for item in response.data]
+        except Exception as e:
+            logger.error(f"Error getting embeddings: {str(e)}")
+            raise
+
+    def _find_top_chunks(self, query: str, query_emb: List[float], chunk_embs: List[List[float]], 
+                        chunks: List[str], top_k: int = 5) -> List[str]:
+        """
+        Find the top-k most relevant chunks for a query.
+        
+        Args:
+            query: The query text
+            query_emb: Embedding of the query
+            chunk_embs: List of chunk embeddings
+            chunks: List of text chunks
+            top_k: Number of top chunks to return (default: 5)
+            
+        Returns:
+            List of top-k most relevant chunks
+        """
+        try:
+            sims = cosine_similarity([query_emb], chunk_embs)[0]
+            top_idxs = sims.argsort()[-top_k:][::-1]
+            return [chunks[i] for i in top_idxs]
+        except Exception as e:
+            logger.error(f"Error finding top chunks: {str(e)}")
+            return chunks[:top_k]  # Return first k chunks in case of error
+
+    def _download_and_extract_text(self, url: str):
+        """
+        Synchronously downloads a PDF from the given URL, extracts text chunks and generates embeddings.
         
         Args:
             url: The URL of the PDF to download
             
         Returns:
-            Extracted text from the PDF, or empty string if extraction fails
+            Tuple of (chunks, embeddings) or (None, None) if extraction fails
         """
         try:
             # Download the PDF
-            response = requests.get(url, timeout=30)
-            response.raise_for_status()
-            
-            # Extract text from the PDF
-            full_text = []
-            with fitz.open(stream=response.content, filetype="pdf") as doc:
-                for page in doc:
-                    full_text.append(page.get_text())
-            
-            return "\n".join(full_text)
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error downloading PDF from {url}: {str(e)}")
-            return ""
+            pdf_bytes = self._download_pdf(url)
+            chunks = self.extract_chunks(pdf_bytes)
+            embeddings = self._get_embeddings(chunks)
+            return chunks, embeddings
         except Exception as e:
             logger.error(f"Error extracting text from PDF {url}: {str(e)}")
             logger.error(traceback.format_exc())
-            return ""
+            return None, None
     
-    async def get_document_text(self, document_link: str) -> Tuple[bool, str]:
+    async def process_document(self, document_link: str):
         """
-        Asynchronously downloads and extracts text from a document.
+        Asynchronously processes a document: downloads, extracts chunks, and generates embeddings.
+        Uses asyncio for concurrent processing of chunks.
         
         Args:
             document_link: URL of the document to process
             
         Returns:
-            Tuple of (success, text_or_error_message)
+            Tuple of (success, result_dict_or_error_message)
+            On success, result_dict contains:
+            - 'chunks': List of text chunks
+            - 'embeddings': List of chunk embeddings
         """
+        async def process_chunk(chunk: str) -> List[float]:
+            """Process a single chunk to get its embedding."""
+            try:
+                embedding = await asyncio.get_event_loop().run_in_executor(
+                    self.executor,
+                    lambda: self._get_embeddings([chunk])[0]
+                )
+                return embedding
+            except Exception as e:
+                logger.error(f"Error processing chunk: {str(e)}")
+                return [0.0] * 1536  # Return zero vector on error (1536 is the dimension of text-embedding-3-small)
+                
+        try:
+            # Download and extract chunks in the background
+            pdf_bytes = await asyncio.get_event_loop().run_in_executor(
+                self.executor,
+                self._download_pdf,
+                document_link
+            )
+            
+            chunks = await asyncio.get_event_loop().run_in_executor(
+                self.executor,
+                self.extract_chunks,
+                pdf_bytes
+            )
+            
+            # Process chunks in parallel with a semaphore to avoid rate limiting
+            semaphore = asyncio.Semaphore(10)  # Limit concurrent embeddings
+            tasks = []
+            
+            for chunk in chunks:
+                task = asyncio.create_task(
+                    self._process_chunk_with_semaphore(chunk, semaphore)
+                )
+                tasks.append(task)
+            
+            # Gather all embeddings
+            embeddings = await asyncio.gather(*tasks)
+            
+            # Filter out any None values that might have occurred during errors
+            valid_chunks = []
+            valid_embeddings = []
+            for chunk, embedding in zip(chunks, embeddings):
+                if embedding is not None and any(embedding):  # Skip None or zero vectors
+                    valid_chunks.append(chunk)
+                    valid_embeddings.append(embedding)
+            
+            return True, {'chunks': valid_chunks, 'embeddings': valid_embeddings}
+            
+        except Exception as e:
+            error_msg = f"Error processing document: {str(e)}"
+            logger.error(error_msg)
+            logger.error(traceback.format_exc())
+            return False, error_msg
+            
+    async def _process_chunk_with_semaphore(self, chunk: str, semaphore: asyncio.Semaphore) -> Optional[List[float]]:
+        """Process a chunk with a semaphore to limit concurrency."""
+        async with semaphore:
+            try:
+                return await asyncio.get_event_loop().run_in_executor(
+                    self.executor,
+                    lambda: self._get_embeddings([chunk])[0]
+                )
+            except Exception as e:
+                logger.error(f"Error getting embedding for chunk: {str(e)}")
+                return None
         if not self._is_valid_url(document_link):
             return False, "Invalid document URL"
             
@@ -150,19 +353,19 @@ class LLMService:
         try:
             # Run the synchronous download and extraction in a thread pool
             loop = asyncio.get_event_loop()
-            text = await loop.run_in_executor(
+            chunks, embeddings = await loop.run_in_executor(
                 self.executor,
                 lambda: self._download_and_extract_text(document_link)
             )
             
-            if not text.strip():
+            if not chunks or not embeddings:
                 return False, "No text could be extracted from the document"
                 
-            logger.info(f"Successfully extracted {len(text)} characters from document")
+            logger.info(f"Successfully extracted {len(chunks)} chunks from document")
             # Log first 500 characters of the extracted text for debugging
-            sample_text = text[:500].replace('\n', ' ').strip()
+            sample_text = chunks[0][:500].replace('\n', ' ').strip()
             logger.info(f"Extracted text sample (first 500 chars): {sample_text}...")
-            return True, text
+            return True, {'chunks': chunks, 'embeddings': embeddings}
             
         except Exception as e:
             error_msg = f"Error processing document: {str(e)}"
@@ -170,10 +373,9 @@ class LLMService:
             logger.error(traceback.format_exc())
             return False, error_msg
 
-
-
     async def _call_llm(self, prompt: str, retry_count: int = 0, used_keys: set = None) -> str:
-        """Calls the LLM with the given prompt and returns the response.
+        """Calls the Gemini Flash Lite model with the given prompt and returns the response.
+        Uses round-robin API key rotation and handles rate limiting.
         
         Args:
             prompt: The prompt to send to the LLM
@@ -186,79 +388,157 @@ class LLMService:
         Raises:
             Exception: If all retry attempts fail
         """
-        used_keys = used_keys or set()
-        max_retries = len(API_KEYS) * 2  # Allow trying each key twice
-        
+        if used_keys is None:
+            used_keys = set()
+            
+        if len(used_keys) >= len(API_KEYS):
+            raise Exception("All API keys have been exhausted")
+            
+        # Get next available API key
+        current_key = None
+        for key in API_KEYS:
+            if key not in used_keys:
+                current_key = key
+                used_keys.add(key)
+                break
+                
+        if not current_key:
+            raise Exception("No available API keys")
+            
         try:
-            response = await self.model.generate_content_async(prompt)
-            return response.text
+            # Configure Gemini with the current API key
+            genai.configure(api_key=current_key)
+            model = genai.GenerativeModel('gemini-1.5-flash-lite')
             
+            # Generate content with error handling
+            response = await model.generate_content_async(
+                prompt,
+                generation_config={
+                    "temperature": 0.3,
+                    "max_output_tokens": 2048,
+                },
+                safety_settings={
+                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                }
+            )
+            
+            # Extract and return the response text
+            if hasattr(response, 'text'):
+                return response.text.strip()
+            elif hasattr(response, 'parts'):
+                return ' '.join(part.text for part in response.parts if hasattr(part, 'text')).strip()
+            else:
+                raise ValueError("Unexpected response format from Gemini API")
+                
         except Exception as e:
-            error_msg = str(e).lower()
-            logger.error(f"Error calling LLM: {error_msg}")
-            
-            # Check if this is a rate limit or quota error
-            is_rate_limit = any(keyword in error_msg for keyword in [
-                "rate limit", "quota", "limit exceeded", 
-                "quota exceeded", "429", "resource exhausted"
-            ])
-            
-            if is_rate_limit and retry_count < max_retries:
-                logger.info(f"Rate limit hit. Retrying with a different API key (attempt {retry_count + 1}/{max_retries})...")
-                # Mark current key as used
-                used_keys.add(self.api_key)
-                # Get a new key
-                available_keys = [k for k in API_KEYS if k not in used_keys]
-                if available_keys:
-                    self.api_key = random.choice(available_keys)
-                    logger.info(f"Switching to API key: {self.api_key[:10]}...")
-                    # Re-initialize with new key
-                    self._setup_genai(used_keys)
-                    # Retry the request
-                    return await self._call_llm(prompt, retry_count + 1, used_keys)
-            
-            # If we get here, either it's not a rate limit error or we've exhausted retries
+            logger.warning(f"API call failed with key ending in {current_key[-4:]}: {str(e)}")
+            # If rate limited or other API error, try with next key
+            if retry_count < len(API_KEYS) - 1:
+                return await self._call_llm(prompt, retry_count + 1, used_keys)
             raise
 
-    def _is_valid_url(self, url: str) -> bool:
-        """Checks if a URL string is well-formed."""
-        try:
-            result = urlparse(url)
-            return all([result.scheme, result.netloc])
-        except ValueError:
-            return False
-
-    async def _is_document_accessible(self, url: str) -> bool:
-        """Checks if a document is accessible via an async HTTP HEAD request."""
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.head(url, timeout=10, follow_redirects=True)
-                return response.status_code == 200
-        except httpx.RequestError:
-            return False
-
-    def _count_tokens(self, text: str) -> int:
-        """Estimate the number of tokens in the given text."""
-        # Rough estimate: 1 token ~= 4 characters for English text
-        return (len(text) + 3) // 4
-
-    def _prepare_prompt(self, queries: List[str], document_text: str) -> Tuple[str, int]:
-        """Prepares the structured prompt for the LLM with extracted document text.
-        
-        Returns:
-            Tuple of (prompt_text, total_tokens)
+    async def _process_single_query(
+        self, 
+        query: str, 
+        query_idx: int, 
+        chunks: List[str], 
+        chunk_embeddings: List[List[float]],
+        semaphore: asyncio.Semaphore
+    ) -> Tuple[int, str]:
         """
-        # Count tokens for document text
-        doc_tokens = self._count_tokens(document_text)
+        Process a single query asynchronously with its own API key.
         
-        # Prepare base prompt parts
-        base_prompt = (
-            "You are a helpful AI assistant that answers questions based on the provided document context.\n"
-            "Response format: Answer {question number}: response\n"
-            "Answer the following questions based on the document content within 500 characters. Follow the format strictly.\n"
-            "If the answer cannot be found in the document, respond generally from your knowledge.\n\n"
-        )
-        base_tokens = self._count_tokens(base_prompt)
+        Args:
+            query: The query to process
+            query_idx: Index of the query
+            chunks: List of document chunks
+            chunk_embeddings: Embeddings for the document chunks
+            semaphore: Semaphore to limit concurrency
+            
+        Returns:
+            Tuple of (query_index, response)
+        """
+        async with semaphore:
+            try:
+                # Get query embedding
+                query_emb = await asyncio.get_event_loop().run_in_executor(
+                    self.executor,
+                    lambda: self._get_embeddings([query])[0]
+                )
+                
+                # Find most relevant chunks
+                top_chunks = self._find_top_chunks(query, query_emb, chunk_embeddings, chunks)
+                
+                # Prepare and send prompt to LLM
+                prompt = self._prepare_prompt(query, top_chunks)
+                response = await self._call_llm(prompt)
+                
+                return query_idx, response
+                
+            except Exception as e:
+                logger.error(f"Error processing query {query_idx + 1}: {str(e)}")
+                return query_idx, f"Error processing query: {str(e)}"
+
+    async def process_queries(self, queries: List[str], document_link: str) -> Dict[str, str]:
+        """
+        Process multiple queries against a document in parallel with minimal latency.
+        
+        Args:
+            queries: List of queries to process
+            document_link: URL of the document to process
+            
+        Returns:
+            Dictionary mapping query numbers to their answers
+        """
+        if not queries:
+            return {}
+            
+        # Process the document first
+        success, result = await self.process_document(document_link)
+        if not success:
+            return {str(i+1): f"Error: {result}" for i in range(len(queries))}
+            
+        chunks = result['chunks']
+        chunk_embeddings = result['embeddings']
+        
+        # Create a semaphore to limit concurrency to the number of available API keys
+        semaphore = asyncio.Semaphore(len(GEMINI_KEYS))
+        
+        # Process all queries concurrently
+        tasks = []
+        for idx, query in enumerate(queries):
+            task = asyncio.create_task(
+                self._process_single_query(query, idx, chunks, chunk_embeddings, semaphore)
+            )
+            tasks.append(task)
+        
+        # Gather all results
+        results = {}
+        for task in asyncio.as_completed(tasks):
+            try:
+                idx, response = await task
+                results[str(idx + 1)] = response
+            except Exception as e:
+                logger.error(f"Error in query task: {str(e)}")
+        
+        return results
+
+    async def process_single_query(self, query: str, document_link: str) -> str:
+        """
+        Process a single query against a document.
+        
+        Args:
+            query: The query to process
+            document_link: URL of the document to process
+            
+        Returns:
+            The answer to the query
+        """
+        results = await self.process_queries([query], document_link)
+        return results.get('1', 'No response generated')
         
         # Calculate total tokens for the prompt
         queries_text = "\n".join(queries)
