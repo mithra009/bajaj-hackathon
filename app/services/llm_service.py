@@ -72,7 +72,7 @@ class LLMService:
     def __init__(self):
         """Initializes the LLMService."""
         self.gemini_api_keys = GEMINI_KEYS
-        self.model_name = "gemini-2.5-flash"
+        self.model_name = "gemini-2.5-flash-lits"
         self.embedding_model = "text-embedding-3-small"
         
         if not OPENAI_API_KEY:
