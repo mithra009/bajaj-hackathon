@@ -52,7 +52,12 @@ def get_next_key_index(num_keys: int) -> int:
 
 # --- API KEY CONFIGURATION ---
 GEMINI_KEYS = [
-    "AIzaSyDRwSnA5trSGHSucMLUa5Yo_y43Q5bJ0wg",
+    "AIzaSyC0KEbkvN6zBcR-RguvpZFSppWViQK1Id4",
+    "AIzaSyCy81UdmFJaNRY0Y8YPKMSJT3zpideLzG8",
+    "AIzaSyC0kZIHetPNcRkA9MY0nncqiqdtBi7TzAM",
+    "AIzaSyBAdlPvCwXXDZyvQJ6mXVhxyrz20vJMul8",
+    "AIzaSyA3wADP1tAbXwFJ6lB9hj4SM1piMast9hI",
+    "AIzaSyDF6BuUFYc3jSEKLKv2Nsr3v8MISJ6j0V8",
     "AIzaSyAHG_guIGql9JG5NaBiRQpHmEQ9O09Dfoo",
     "AIzaSyBXVE_Zo_XsjvilpzVjugIe3wg9ZWe62vM",
     "AIzaSyBCPf3_VWZBQ4tJPGE8fSM9MBXV70ccPLw",
