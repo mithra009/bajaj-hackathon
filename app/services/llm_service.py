@@ -1,7 +1,7 @@
 import os
 import asyncio
 import google.generativeai as genai
-from typing import List, Dict, Any, Optional, Tuple, Union
+from typing import List, Dict, Any, Optional, Tuple, Union, Type
 from urllib.parse import urlparse
 import httpx
 import requests
@@ -19,7 +19,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from sklearn.metrics.pairwise import cosine_similarity
 import openai
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from openai import RateLimitError, APIError, APITimeoutError, APIConnectionError
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, retry_if_exception
 from .query_logger import query_logger
 from dotenv import load_dotenv
 
@@ -197,10 +198,15 @@ Now answer the following question *clearly and concisely*. If necessary, you can
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=4, max=10),
-        retry=retry_if_exception_type((openai.RateLimitError, openai.APIError)),
+        retry=(
+            retry_if_exception_type(RateLimitError) |
+            retry_if_exception_type(APIError) |
+            retry_if_exception_type(APITimeoutError) |
+            retry_if_exception_type(APIConnectionError)
+        ),
         reraise=True
     )
-    def _get_embeddings(self, texts: List[str], model: str = "text-embedding-3-small") -> List[List[float]]:
+    async def _get_embeddings(self, texts: List[str], model: str = "text-embedding-3-small") -> List[List[float]]:
         """
         Get embeddings for a list of texts using OpenAI API.
         
@@ -210,16 +216,27 @@ Now answer the following question *clearly and concisely*. If necessary, you can
             
         Returns:
             List of embeddings
+        
+        Raises:
+            RateLimitError: If the API rate limit is exceeded
+            APIError: For other API-related errors
+            APITimeoutError: If the request times out
+            APIConnectionError: If there's a connection error
         """
         try:
-            response = openai.embeddings.create(
+            # Use the async client for better performance
+            client = openai.AsyncOpenAI()
+            response = await client.embeddings.create(
                 model=model,
                 input=texts
             )
             return [item.embedding for item in response.data]
-        except Exception as e:
-            logger.error(f"Error getting embeddings: {str(e)}")
+        except (RateLimitError, APIError, APITimeoutError, APIConnectionError) as e:
+            logger.warning(f"API error getting embeddings (will retry): {str(e)}")
             raise
+        except Exception as e:
+            logger.error(f"Unexpected error getting embeddings: {str(e)}")
+            raise APIError(f"Failed to get embeddings: {str(e)}")
 
     def _find_top_chunks(self, query: str, query_emb: List[float], chunk_embs: List[List[float]], 
                         chunks: List[str], top_k: int = 5) -> List[str]:
@@ -244,9 +261,9 @@ Now answer the following question *clearly and concisely*. If necessary, you can
             logger.error(f"Error finding top chunks: {str(e)}")
             return chunks[:top_k]  # Return first k chunks in case of error
 
-    def _download_and_extract_text(self, url: str):
+    async def _download_and_extract_text(self, url: str):
         """
-        Synchronously downloads a PDF from the given URL, extracts text chunks and generates embeddings.
+        Asynchronously downloads a PDF from the given URL, extracts text chunks and generates embeddings.
         
         Args:
             url: The URL of the PDF to download
@@ -256,13 +273,28 @@ Now answer the following question *clearly and concisely*. If necessary, you can
         """
         try:
             # Download the PDF
-            pdf_bytes = self._download_pdf(url)
-            chunks = self.extract_chunks(pdf_bytes)
-            embeddings = self._get_embeddings(chunks)
+            pdf_bytes = await asyncio.to_thread(self._download_pdf, url)
+            if not pdf_bytes:
+                logger.error(f"Failed to download PDF from {url}")
+                return None, None
+                
+            # Extract text chunks
+            chunks = await asyncio.to_thread(self.extract_chunks, pdf_bytes)
+            if not chunks:
+                logger.error(f"No text could be extracted from PDF at {url}")
+                return None, None
+                
+            # Generate embeddings for each chunk
+            embeddings = await self._get_embeddings(chunks)
+            
+            if not embeddings or len(embeddings) != len(chunks):
+                logger.error(f"Failed to generate embeddings for chunks from {url}")
+                return None, None
+                
             return chunks, embeddings
+            
         except Exception as e:
-            logger.error(f"Error extracting text from PDF {url}: {str(e)}")
-            logger.error(traceback.format_exc())
+            logger.error(f"Error in _download_and_extract_text: {str(e)}", exc_info=True)
             return None, None
     
     async def process_document(self, document_link: str):
@@ -279,55 +311,28 @@ Now answer the following question *clearly and concisely*. If necessary, you can
             - 'chunks': List of text chunks
             - 'embeddings': List of chunk embeddings
         """
-        async def process_chunk(chunk: str) -> List[float]:
-            """Process a single chunk to get its embedding."""
-            try:
-                embedding = await asyncio.get_event_loop().run_in_executor(
-                    self.executor,
-                    lambda: self._get_embeddings([chunk])[0]
-                )
-                return embedding
-            except Exception as e:
-                logger.error(f"Error processing chunk: {str(e)}")
-                return [0.0] * 1536  # Return zero vector on error (1536 is the dimension of text-embedding-3-small)
-                
+        if not self._is_valid_url(document_link):
+            logger.error(f"Invalid document URL: {document_link}")
+            return False, f"Invalid document URL: {document_link}"
+            
         try:
-            # Download and extract chunks in the background
-            pdf_bytes = await asyncio.get_event_loop().run_in_executor(
-                self.executor,
-                self._download_pdf,
-                document_link
-            )
+            # Download PDF and extract text chunks
+            chunks, embeddings = await self._download_and_extract_text(document_link)
             
-            chunks = await asyncio.get_event_loop().run_in_executor(
-                self.executor,
-                self.extract_chunks,
-                pdf_bytes
-            )
+            if not chunks or not embeddings:
+                error_msg = f"Failed to process document: {document_link}"
+                logger.error(error_msg)
+                return False, error_msg
+                
+            return True, {
+                'chunks': chunks,
+                'embeddings': embeddings
+            }
             
-            # Process chunks in parallel with a semaphore to avoid rate limiting
-            semaphore = asyncio.Semaphore(10)  # Limit concurrent embeddings
-            tasks = []
-            
-            for chunk in chunks:
-                task = asyncio.create_task(
-                    self._process_chunk_with_semaphore(chunk, semaphore)
-                )
-                tasks.append(task)
-            
-            # Gather all embeddings
-            embeddings = await asyncio.gather(*tasks)
-            
-            # Filter out any None values that might have occurred during errors
-            valid_chunks = []
-            valid_embeddings = []
-            for chunk, embedding in zip(chunks, embeddings):
-                if embedding is not None and any(embedding):  # Skip None or zero vectors
-                    valid_chunks.append(chunk)
-                    valid_embeddings.append(embedding)
-            
-            return True, {'chunks': valid_chunks, 'embeddings': valid_embeddings}
-            
+        except Exception as e:
+            error_msg = f"Error processing document {document_link}: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            return False, error_msg
         except Exception as e:
             error_msg = f"Error processing document: {str(e)}"
             logger.error(error_msg)
