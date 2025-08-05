@@ -77,7 +77,7 @@ class LLMService:
     def __init__(self):
         """Initializes the LLMService."""
         self.gemini_api_keys = GEMINI_KEYS
-        self.model_name = "gemini-2.5-flash-lite"
+        self.model_name = "gemini-2.0-flash"
         self.embedding_model = "text-embedding-3-small"
         
         if not OPENAI_API_KEY:
@@ -109,7 +109,7 @@ class LLMService:
         prompt_parts.append(
             "Provide clear, concise answers for each question in order. "
             "Start each answer with the question number followed by a colon. "
-            "Keep each answer under 200 characters. "
+            "Keep each answer under 500 characters. "
             "Example:\n"
             "1: [Answer to question 1]\n"
             "2: [Answer to question 2]"
@@ -212,41 +212,99 @@ class LLMService:
             raise Exception(f"Gemini API call failed: {e}")
 
     async def process_queries(self, queries: List[str], document_link: str) -> Dict[str, str]:
-        """Processes all queries in a single RAG-based batch."""
+        """Processes all queries in a single RAG-based batch.
+        
+        Args:
+            queries: List of questions to be answered
+            document_link: URL of the document to process
+            
+        Returns:
+            Dict mapping question numbers to answers
+        """
+        start_time = time.time()
+        
         if not queries:
             return {}
 
         try:
+            # Log document information in a structured format
+            logger.info(f"\n{'='*120}")
+            logger.info("PROCESSING NEW REQUEST")
+            logger.info(f"{'='*120}")
+            logger.info(f"DOCUMENT_URL: {document_link}")
+            logger.info(f"QUERY_COUNT: {len(queries)}")
+            logger.info("QUERIES:")
+            for i, query in enumerate(queries, 1):
+                logger.info(f"  {i}. {query}")
+            logger.info(f"{'='*120}")
+            
             # 1. Select the next Gemini API key for this entire request
             key_index = get_next_key_index(len(self.gemini_api_keys))
             api_key_for_request = self.gemini_api_keys[key_index]
-            logger.info(f"Processing request with Gemini key index {key_index} (...{api_key_for_request[-4:]})")
+            logger.info(f"Using Gemini key index: {key_index} (...{api_key_for_request[-4:]})")
 
             # 2. Download and chunk document
+            logger.info("\nDownloading and processing document...")
+            download_start = time.time()
             pdf_bytes = await asyncio.to_thread(self._download_pdf, document_link)
             doc_chunks = await asyncio.to_thread(self.extract_chunks, pdf_bytes)
             if not doc_chunks:
                 raise ValueError("Failed to extract text chunks from the document.")
+            logger.info(f"Document processed in {time.time() - download_start:.2f}s | Chunks: {len(doc_chunks)}")
 
             # 3. RAG Pre-processing using OpenAI Embeddings
+            logger.info("\nGenerating embeddings...")
+            embed_start = time.time()
             doc_embeddings = np.array(await self._get_embeddings(doc_chunks))
             query_embeddings = await self._get_embeddings(queries)
+            logger.info(f"Embeddings generated in {time.time() - embed_start:.2f}s")
             
+            # Log each query and its processing
             queries_with_context = []
-            for i, query in enumerate(queries):
-                query_emb = query_embeddings[i]
+            logger.info("\nProcessing queries...")
+            for i, (query, query_emb) in enumerate(zip(queries, query_embeddings), 1):
                 # Find top 7 relevant chunks for this query
                 relevant_chunks = self._find_top_chunks(query_emb, doc_embeddings, doc_chunks, top_k=7)
                 queries_with_context.append((query, relevant_chunks))
+                logger.info(f"\nQuery {i}:"
+                          f"\n  Question: {query}"
+                          f"\n  Context Chunks: {len(relevant_chunks)}")
 
             # 4. Prepare a single prompt with all queries and their relevant chunks
+            logger.info("\nGenerating prompt...")
             prompt = self._prepare_rag_prompt_for_all_queries(queries_with_context)
-
+            
             # 5. Make a single API call to Gemini
+            logger.info("\nCalling Gemini API...")
+            llm_start = time.time()
             llm_response_text = await self._call_llm_with_single_key(prompt, api_key_for_request)
+            llm_time = time.time() - llm_start
+            logger.info(f"LLM API call completed in {llm_time:.2f}s")
 
             # 6. Parse the single response
             final_responses = self._parse_llm_response(llm_response_text, len(queries))
+            
+            # Log final responses and timing in a structured format
+            total_time = time.time() - start_time
+            logger.info(f"\n{'='*120}")
+            logger.info("QUERY PROCESSING COMPLETE")
+            logger.info(f"{'='*120}")
+            logger.info("DOCUMENT_PROCESSED: " + ("SUCCESS" if final_responses else "FAILED"))
+            logger.info(f"DOCUMENT_URL: {document_link}")
+            logger.info(f"TOTAL_PROCESSING_TIME: {total_time:.2f}s")
+            logger.info(f"LLM_API_TIME: {llm_time:.2f}s ({llm_time/total_time*100:.1f}% of total)")
+            
+            # Log each query and its answer
+            logger.info("\nQUERY_RESULTS:")
+            for i, (query, answer) in enumerate(zip(queries, final_responses.values()), 1):
+                logger.info(f"\nQUERY_{i}:")
+                logger.info(f"  QUESTION: {query}")
+                logger.info(f"  ANSWER: {answer}")
+                logger.info(f"  STATUS: PROCESSED")
+            
+            logger.info(f"\n{'='*120}")
+            logger.info(f"END OF PROCESSING")
+            logger.info(f"{'='*120}\n")
             
             return final_responses
 
