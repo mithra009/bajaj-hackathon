@@ -44,12 +44,11 @@ KEY_INDEX_FILE = Path("/app/data/api_key_index.json")
 
 # Hardcoded Gemini API keys
 GEMINI_KEYS = [
-    "AIzaSyCtV8k4-J_4lmwE4aL4dRQsSt63Iq-gAmo",
-    "AIzaSyBdUY5Vn0ZbbgqLlURsaCJNzpV1CiFwKeE",
-    "AIzaSyBNsBJr0Nnh0jWS37ZiX9g7gvyls5SFLpM",
-    "AIzaSyAIEMcIJrils1DXLweKai6T6Dz2agzQF-0",
-    "AIzaSyAWnC5B0F3MvmTE5rUQY3Uh27BXh2KM4iU",
-    "AIzaSyDYiPfw55zlRZgWJKrYWdYzqyt1wueB-kE"
+    "AIzaSyBt3uYlNWBM0jAixwK-IP4kd1iYnEz5ekE",
+    "AIzaSyBxsA2DJGaG0foTkQF07bnYK-2Nnw3PU08",
+    "AIzaSyC8gk0hfmDGBoBdOO3vPlafql6h-9qRPEA",
+    "AIzaSyBq_2OA0beLrqgnNY6tLylXWuva9Oe8duI",
+    "AIzaSyCsqLzRq2sN8MoMJlwzvvZVV0VddRiScY8",
 ]
 
 # Get OpenAI API key from environment
