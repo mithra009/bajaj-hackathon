@@ -1,25 +1,31 @@
 # syntax = docker/dockerfile:1
-# Use minimal Python base image
 FROM python:3.11-slim
-
-WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+    gcc \
+    python3-dev \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user and set up directories
+# Set working directory
+WORKDIR /app
+
+# Copy requirements first to leverage Docker cache
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . .
+
+# Create non-root user and set permissions
 RUN useradd --create-home --shell /bin/bash appuser && \
     mkdir -p /app/logs /app/data && \
     chown -R appuser:appuser /app
-
-# Copy application code
-COPY --chown=appuser:appuser . .
-
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
