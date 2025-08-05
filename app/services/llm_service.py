@@ -251,8 +251,11 @@ Now answer the following question *clearly and concisely*. If necessary, you can
         except openai.APIConnectionError as e:
             logger.warning(f"API connection error: {str(e)}")
             raise APIConnectionError(str(e))
-        except openai.APIError as e:
-            logger.warning(f"API error: {str(e)}")
+        except openai.APIStatusError as e:
+            logger.warning(f"API status error: {str(e)}")
+            raise APIError(str(e))
+        except openai.OpenAIError as e:
+            logger.warning(f"OpenAI API error: {str(e)}")
             raise APIError(str(e))
         except Exception as e:
             logger.error(f"Unexpected error getting embeddings: {str(e)}")
