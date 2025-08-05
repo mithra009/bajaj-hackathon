@@ -6,13 +6,13 @@ including model settings, API configurations, and performance parameters.
 """
 import os
 import warnings
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 # Import BaseSettings from pydantic v1
-from pydantic import BaseSettings, validator
+from pydantic import BaseModel, validator
 from pydantic.networks import HttpUrl
 
-class Settings(BaseSettings):
+class Settings(BaseModel):
     """Application settings and configurations."""
     
     # Application settings
@@ -32,41 +32,37 @@ class Settings(BaseSettings):
     CORS_ORIGINS: List[str] = os.getenv("CORS_ORIGINS", "*").split(",")
     
     # Model configuration
-    MODEL_NAME: str = "gemini-2.5-flash-lite"
-    EMBEDDING_MODEL: str = "text-embedding-3-small"
-    MAX_TOKENS: int = 8192
-    MAX_CONTEXT_LENGTH: int = 10000  # Leave some room for the prompt
-    TEMPERATURE: float = 0.1
-    TOP_P: float = 0.95
-    TOP_K: int = 40
+    MODEL_NAME: str = os.getenv("MODEL_NAME", "gemini-2.5-flash-latest")
+    MAX_TOKENS: int = int(os.getenv("MAX_TOKENS", " 8196"))
+    MAX_CONTEXT_LENGTH: int = int(os.getenv("MAX_CONTEXT_LENGTH", "4000"))
+    TEMPERATURE: float = float(os.getenv("TEMPERATURE", "0.3"))
+    TOP_P: float = float(os.getenv("TOP_P", "0.95"))
+    TOP_K: int = int(os.getenv("TOP_K", "40"))
     
-    # API settings
-    OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
-    
-    # Rate limiting and concurrency
-    # Note: Gemini API keys are now managed directly in the LLMService
+    # Rate limiting
     MAX_CONCURRENT_QUERIES: int = int(os.getenv("MAX_CONCURRENT_QUERIES", "10"))
-    MAX_CONCURRENT_EMBEDDINGS: int = int(os.getenv("MAX_CONCURRENT_EMBEDDINGS", "5"))
-    RATE_LIMIT_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
+    MAX_QUERIES_PER_BATCH: int = int(os.getenv("MAX_QUERIES_PER_BATCH", "5"))
+    
+    # API Keys
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     
     # Timeouts (in seconds)
-    API_TIMEOUT: int = int(os.getenv("API_TIMEOUT", "30"))
-    EMBEDDING_TIMEOUT: int = int(os.getenv("EMBEDDING_TIMEOUT", "60"))
-    DOWNLOAD_TIMEOUT: int = int(os.getenv("DOWNLOAD_TIMEOUT", "120"))
-    
-    # Document processing
-    MAX_DOCUMENT_SIZE_MB: int = int(os.getenv("MAX_DOCUMENT_SIZE_MB", "20"))  # 20MB max
-    CHUNK_SIZE: int = 1000  # Characters per chunk
-    CHUNK_OVERLAP: int = 200  # Characters overlap between chunks
+    HTTP_TIMEOUT: int = int(os.getenv("HTTP_TIMEOUT", "30"))
+    MODEL_TIMEOUT: int = int(os.getenv("MODEL_TIMEOUT", "60"))
     
     # Caching
-    ENABLE_CACHE: bool = os.getenv("ENABLE_CACHE", "true").lower() == "true"
+    CACHE_ENABLED: bool = os.getenv("CACHE_ENABLED", "true").lower() == "true"
     CACHE_TTL: int = int(os.getenv("CACHE_TTL", str(24 * 60 * 60)))  # 24 hours
     
     # Logging
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     LOG_FORMAT: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     
+    # File paths
+    LOG_DIR: str = os.getenv("LOG_DIR", "logs")
+    DATA_DIR: str = os.getenv("DATA_DIR", "data")
+    
+    # Validation
     class Config:
         case_sensitive = True
         env_file = ".env"

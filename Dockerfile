@@ -12,11 +12,17 @@ RUN apt-get update && \
 # Set working directory
 WORKDIR /app
 
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir --upgrade pip && \
+# Install Python dependencies with retries
+RUN pip install --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
@@ -26,11 +32,6 @@ COPY . .
 RUN useradd --create-home --shell /bin/bash appuser && \
     mkdir -p /app/logs /app/data && \
     chown -R appuser:appuser /app
-
-# Set environment variables
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app \
-    PATH=/home/appuser/.local/bin:$PATH
 
 # Switch to non-root user
 USER appuser

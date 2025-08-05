@@ -1,23 +1,25 @@
+import os
+import logging
+import time
+import json
+import uvicorn
+from pathlib import Path
+from datetime import datetime
+from typing import List, Optional, Dict, Any, Union
+
 from fastapi import FastAPI, HTTPException, Depends, status, Request, Body, BackgroundTasks
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, HttpUrl, Field
-from typing import List, Optional, Dict, Any, Union
-import uvicorn
-import time
-import os
-import logging
-from pathlib import Path
-from datetime import datetime
+from pydantic import BaseModel, HttpUrl, Field, validator
 from dotenv import load_dotenv
 
-# Load environment variables
+# Load environment variables first
 load_dotenv()
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=os.getenv('LOG_LEVEL', 'INFO'),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
@@ -26,11 +28,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Ensure logs directory exists
-logs_dir = Path("logs")
-logs_dir.mkdir(exist_ok=True, parents=True)
+# Create FastAPI app
+app = FastAPI(
+    title="Document Query API",
+    description="API for querying documents using LLMs",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
 
-# Security
+# Security middleware
 security = HTTPBearer()
 API_KEY = os.getenv("API_KEY")
 
@@ -53,10 +60,10 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) 
         )
     return credentials.credentials
 
-from app.services.llm_service import llm_service
-from app.services.query_logger import query_logger
+# Import services after app creation
+from app.services import llm_service, query_logger
 
-# CORS middleware
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
