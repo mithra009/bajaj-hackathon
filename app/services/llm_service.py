@@ -38,7 +38,7 @@ GEMINI_KEYS = [
 ]
 
 # OpenAI API key for embeddings
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") [cite: 1, 2]
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Configure logging
 logging.basicConfig(
@@ -56,7 +56,7 @@ class LLMService:
         self.embedding_model = "text-embedding-3-small"
         
         if not OPENAI_API_KEY:
-            raise ValueError("OPENAI_API_KEY environment variable is not set. It is required for embeddings.") [cite: 1, 2]
+            raise ValueError("OPENAI_API_KEY environment variable is not set. It is required for embeddings.")
         self.openai_client = openai.AsyncOpenAI(api_key=OPENAI_API_KEY)
 
         self.max_tokens = 8196
@@ -145,7 +145,7 @@ class LLMService:
         last_error = None
 
         for key in shuffled_keys:
-            response = None # Initialize response to None for the current attempt
+            response = None
             try:
                 genai.configure(api_key=key)
                 model = genai.GenerativeModel(self.model_name)
@@ -163,12 +163,10 @@ class LLMService:
                     safety_settings=safety_settings
                 )
                 
-                # This will raise an exception if the prompt was blocked, which is caught below
                 return response.text.strip()
             
             except Exception as e:
                 logger.warning(f"API call failed with key ...{key[-4:]}: {e}")
-                # Check if the response object exists and has feedback, which indicates a safety block
                 if response and hasattr(response, 'prompt_feedback') and response.prompt_feedback:
                      block_reason = response.prompt_feedback.block_reason
                      logger.error(f"Request was blocked. Reason: {block_reason}")
