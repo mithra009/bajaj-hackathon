@@ -13,7 +13,7 @@ import re
 import fitz  # PyMuPDF
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
-from google.generativeai.types import HarmCategory, HarmBlockThreshold, generation
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from dotenv import load_dotenv
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
@@ -38,7 +38,7 @@ GEMINI_KEYS = [
 ]
 
 # OpenAI API key for embeddings
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") [cite: 1, 2]
 
 # Configure logging
 logging.basicConfig(
@@ -52,11 +52,11 @@ class LLMService:
     def __init__(self):
         """Initializes the LLMService."""
         self.gemini_api_keys = GEMINI_KEYS
-        self.model_name = "gemini-2.5-flash-lite"
+        self.model_name = "gemini-1.5-flash-latest"
         self.embedding_model = "text-embedding-3-small"
         
         if not OPENAI_API_KEY:
-            raise ValueError("OPENAI_API_KEY environment variable is not set. It is required for embeddings.")
+            raise ValueError("OPENAI_API_KEY environment variable is not set. It is required for embeddings.") [cite: 1, 2]
         self.openai_client = openai.AsyncOpenAI(api_key=OPENAI_API_KEY)
 
         self.max_tokens = 8196
@@ -145,11 +145,11 @@ class LLMService:
         last_error = None
 
         for key in shuffled_keys:
+            response = None # Initialize response to None for the current attempt
             try:
                 genai.configure(api_key=key)
                 model = genai.GenerativeModel(self.model_name)
                 
-                # --- FIX: Correctly defined safety settings to prevent blocking ---
                 safety_settings = {
                     HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
                     HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -162,15 +162,19 @@ class LLMService:
                     generation_config={"temperature": 0.3, "max_output_tokens": self.max_tokens},
                     safety_settings=safety_settings
                 )
+                
+                # This will raise an exception if the prompt was blocked, which is caught below
                 return response.text.strip()
             
-            # --- IMPROVEMENT: More specific error handling for blocked prompts ---
-            except generation.BlockedPromptError as e:
-                logger.error(f"Request was blocked by Gemini API with key ...{key[-4:]}. Reason: {e}")
-                last_error = e
             except Exception as e:
                 logger.warning(f"API call failed with key ...{key[-4:]}: {e}")
-                last_error = e
+                # Check if the response object exists and has feedback, which indicates a safety block
+                if response and hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+                     block_reason = response.prompt_feedback.block_reason
+                     logger.error(f"Request was blocked. Reason: {block_reason}")
+                     last_error = f"Request was blocked by safety filter: {block_reason}"
+                else:
+                     last_error = e
 
         raise Exception(f"All API keys failed. Last error: {last_error}")
 
