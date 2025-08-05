@@ -128,7 +128,7 @@ async def get_query_logs(limit: int = 100):
             detail=f"Failed to retrieve logs: {str(e)}"
         )
 
-@app.post("/query", response_model=Dict[str, str])
+@app.post("/hackrx/run", response_model=QueryResponse, summary="Query a document with multiple questions")
 async def query_document(
     request: Request,
     query_data: QueryRequest = Body(...),
