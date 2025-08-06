@@ -46,7 +46,7 @@ app = FastAPI(
 # Security middleware
 security = HTTPBearer()
 # Use the provided authentication token
-API_KEY = "fd53cda9e372cc74319d047c60acdcc06e62e7e5550a92d842c425b82df84e4d"
+API_KEY = "8e82ec704661cd0a075d882f71118212d2c09b96831696aea46f17519d96bcbf"
 
 # Log the first and last 4 characters of the key for verification
 logger.info(f"Using API key: {API_KEY[:4]}...{API_KEY[-4:]}")
