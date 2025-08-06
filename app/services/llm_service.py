@@ -114,7 +114,7 @@ class LLMService:
         prompt_parts.append(
             "Provide clear, concise answers for each question in order. "
             "Start each answer with the question number followed by a colon. "
-            "Keep each answer under 500 characters. "
+            "Keep each answer under 700 characters. "
             "Example:\n"
             "1: [Answer to question 1]\n"
             "2: [Answer to question 2]"
