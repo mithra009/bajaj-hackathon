@@ -633,25 +633,31 @@ class LLMService:
                     key_index = get_next_key_index(len(self.gemini_api_keys))
                     api_key = self.gemini_api_keys[key_index]
                     
-                    # Configure Gemini
+                    # Configure Gemini with the latest model
                     genai.configure(api_key=api_key)
-                    model = genai.GenerativeModel('gemini-pro-vision')
+                    model = genai.GenerativeModel('gemini-2.0-flash')
                     
-                    # Prepare the prompt for vision
-                    vision_prompt = (
-                        "Please analyze this image and answer the following questions. "
-                        "If the image contains text, read it. "
-                        "If it's a diagram or chart, describe it. "
-                        "For each question, provide a concise answer based on the image content.\n\n" +
-                        "\n".join([f"{i+1}. {q}" for i, q in enumerate(queries)]) +
-                        "\n\nFormat your response as: ANSWER_[NUMBER]: [your answer]"
+                    # Create a single prompt with URL and all questions
+                    system_prompt = (
+                        "You are an AI assistant that analyzes images. "
+                        "You will be given an image URL and a list of questions. "
+                        "Analyze the image at the provided URL and answer each question based on the image content.\n\n"
+                        f"Image URL: {url}\n\n"
+                        "Questions:\n" +
+                        "\n".join([f"{i+1}. {q}" for i, q in enumerate(queries)]) + "\n\n" +
+                        "Instructions:\n"
+                        "1. If the image contains text, read it carefully.\n"
+                        "2. If it's a diagram, chart, or visual content, describe it in detail.\n"
+                        "3. For each question, provide a concise and accurate answer based on the image.\n"
+                        "4. If you cannot determine the answer from the image, say 'The image does not contain information to answer this question.'\n\n"
+                        "Format your response as:\n"
+                        "ANSWER_1: [answer to question 1]\n"
+                        "ANSWER_2: [answer to question 2]\n"
+                        "... and so on for each question."
                     )
                     
-                    # Convert bytes to PIL Image
-                    image = Image.open(io.BytesIO(image_bytes))
-                    
-                    # Generate content
-                    response = model.generate_content([vision_prompt, image])
+                    # Generate content with just the prompt (no image upload)
+                    response = model.generate_content(system_prompt)
                     
                     # Parse the response
                     answers = {}
