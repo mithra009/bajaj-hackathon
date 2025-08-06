@@ -623,10 +623,52 @@ class LLMService:
             
             logger.info(f"Processing {file_type} file: {url}")
             
-            # For images, just use the URL directly
+            # For images, use Gemini's vision capabilities
             if file_type == 'image':
-                # Return the image URL as the response
-                return {str(i+1): f"Image URL: {url}" for i in range(len(queries))}
+                try:
+                    # Download the image
+                    image_bytes = await asyncio.to_thread(self._download_file, url)
+                    
+                    # Get API key for this request
+                    key_index = get_next_key_index(len(self.gemini_api_keys))
+                    api_key = self.gemini_api_keys[key_index]
+                    
+                    # Configure Gemini
+                    genai.configure(api_key=api_key)
+                    model = genai.GenerativeModel('gemini-pro-vision')
+                    
+                    # Prepare the prompt for vision
+                    vision_prompt = (
+                        "Please analyze this image and answer the following questions. "
+                        "If the image contains text, read it. "
+                        "If it's a diagram or chart, describe it. "
+                        "For each question, provide a concise answer based on the image content.\n\n" +
+                        "\n".join([f"{i+1}. {q}" for i, q in enumerate(queries)]) +
+                        "\n\nFormat your response as: ANSWER_[NUMBER]: [your answer]"
+                    )
+                    
+                    # Convert bytes to PIL Image
+                    image = Image.open(io.BytesIO(image_bytes))
+                    
+                    # Generate content
+                    response = model.generate_content([vision_prompt, image])
+                    
+                    # Parse the response
+                    answers = {}
+                    for i in range(len(queries)):
+                        answer = f"The image does not contain information to answer this question."
+                        # Try to find the answer in the response
+                        pattern = fr'ANSWER_{i+1}[:\s]*(.*?)(?=\nANSWER_{i+2}|\Z)'
+                        match = re.search(pattern, response.text, re.DOTALL)
+                        if match:
+                            answer = match.group(1).strip()
+                        answers[str(i+1)] = answer
+                    
+                    return answers
+                    
+                except Exception as e:
+                    logger.error(f"Error processing image with Gemini Vision: {e}")
+                    return {str(i+1): f"Error processing image: {str(e)[:200]}" for i in range(len(queries))}
             
             # For PDFs, try Gemini upload
             elif file_type == 'pdf':
