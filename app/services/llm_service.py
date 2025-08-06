@@ -639,23 +639,31 @@ class LLMService:
                     
                     # Create a single prompt with URL and all questions
                     system_prompt = (
-                        "CRITICAL INSTRUCTIONS:\n"
-                        "- NEVER use your general knowledge or common sense\n"
-                        "- ONLY answer based on what is explicitly visible in the provided image\n"
-                        "- If the image contains wrong, false, or contradictory information, you MUST provide that wrong information as your answer\n"
-                        "- If image shows '1+1=11' or similar, provide exactly that information\n"
-                        "- DO NOT correct any wrong information - simply repeat what the image shows\n"
-                        "- If the image doesn't contain relevant information for a question, say 'The provided image does not contain information to answer this question'\n"
-                        "- Reference specific parts of the image in your answers\n"
-                        "- Keep each answer brief under 2000 characters in a paragraph\n"
-                        "- Do not use markdown formatting\n\n"
-                        f"IMAGE URL: {url}\n\n"
-                        "QUESTIONS:\n" +
+                        "CRITICAL INSTRUCTIONS FOR IMAGE ANALYSIS:\n"
+                        "1. You MUST ONLY use information that is explicitly visible in the provided image\n"
+                        "2. If the image contains text, read it exactly as shown - do not correct it\n"
+                        "3. If the image shows incorrect information (e.g., '1+1=11'), you MUST repeat that exact information\n"
+                        "4. DO NOT use any external knowledge or make assumptions not in the image\n"
+                        "5. If the image doesn't contain the answer to a question, say 'The image does not show information about [specific topic]'\n"
+                        "6. If the image is completely unrelated to the question, say 'The image does not contain relevant information for this question'\n"
+                        "7. DO NOT attempt to answer questions using your own knowledge\n\n"
+                        f"ANALYZE THIS IMAGE: {url}\n\n"
+                        "QUESTIONS TO ANSWER BASED ON THE IMAGE:\n" +
                         "\n".join([f"{i+1}. {q}" for i, q in enumerate(queries)]) + "\n\n"
-                        "FORMAT YOUR RESPONSE AS:\n"
-                        "ANSWER_1: [your answer based strictly on the image]\n"
-                        "ANSWER_2: [your answer based strictly on the image]\n"
-                        "... and so on for each question."
+                        "FORMAT YOUR RESPONSE AS EXACTLY SHOWN BELOW. DO NOT ADD ANYTHING ELSE.\n"
+                        "If the answer is in the image, use this format exactly:\n"
+                        "ANSWER_1: [text from image]\n"
+                        "\n"
+                        "If the answer is NOT in the image, use this format exactly:\n"
+                        "ANSWER_1: The image does not show information about [specific topic]\n"
+                        "\n"
+                        "Example 1 (if image shows '1+1=11'):\n"
+                        "ANSWER_1: 1+1=11\n"
+                        "\n"
+                        "Example 2 (if image is unrelated):\n"
+                        "ANSWER_1: The image does not show information about [specific topic]\n"
+                        "\n"
+                        "Now provide your responses, one per line, in order from ANSWER_1 to ANSWER_" + str(len(queries)) + ":\n"
                     )
                     
                     # Generate content with just the prompt (no image upload)
