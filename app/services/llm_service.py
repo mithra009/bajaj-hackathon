@@ -96,6 +96,61 @@ class LLMService:
         logger.info(f"Using OpenAI embedding model: {self.embedding_model}")
         logger.info(f"Batch processing: max {self.max_batch_size} queries per batch")
 
+    def _is_image_url(self, url: str) -> bool:
+        """Check if URL points to an image"""
+        try:
+            # Check common image hosting domains
+            image_domains = ['ibb.co', 'imgur.com', 'postimg.cc', 'imageban.ru', 'imageshack.us']
+            parsed = urlparse(url.lower())
+            
+            if any(domain in parsed.netloc for domain in image_domains):
+                return True
+                
+            # Check file extensions
+            image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg']
+            return any(url.lower().endswith(ext) for ext in image_extensions)
+            
+        except Exception:
+            return False
+
+    def _is_pdf_url(self, url: str) -> bool:
+        """Check if URL points to a PDF"""
+        return url.lower().endswith('.pdf') or 'pdf' in url.lower()
+        
+    def _get_url_type(self, url: str) -> str:
+        """Determine the type of content at the given URL."""
+        try:
+            # Check common file extensions first
+            url_lower = url.lower()
+            if any(ext in url_lower for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']):
+                return 'image'
+            elif url_lower.endswith('.pdf'):
+                return 'pdf'
+            elif any(ext in url_lower for ext in ['.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx']):
+                return 'document'
+            
+            # If extension check is inconclusive, try HEAD request
+            try:
+                response = requests.head(url, allow_redirects=True, timeout=5)
+                content_type = response.headers.get('content-type', '').lower()
+                
+                if 'image' in content_type:
+                    return 'image'
+                elif 'pdf' in content_type:
+                    return 'pdf'
+                elif any(doc_type in content_type for doc_type in ['word', 'excel', 'powerpoint', 'msword', 'spreadsheet', 'presentation']):
+                    return 'document'
+                elif 'text/html' in content_type or 'application/xhtml+xml' in content_type:
+                    return 'webpage'
+                else:
+                    return 'unknown'
+            except:
+                return 'unknown'
+                
+        except Exception as e:
+            logger.warning(f"Error determining URL type for {url}: {e}")
+            return 'unknown'
+
     def _prepare_batch_query_prompt(self, queries_with_context: List[Tuple[int, str, List[str]]]) -> str:
         """Prepares a batch prompt for multiple queries with their relevant contexts."""
         
@@ -550,6 +605,69 @@ class LLMService:
             logger.error(f"Critical error in batch processing: {e}", exc_info=True)
             return {str(i+1): f"Processing failed: {str(e)[:100]}" for i in range(len(queries))}
 
+    async def _prepare_direct_url_prompt(self, queries: List[str], url: str, url_type: str) -> str:
+        """Prepare a prompt for direct URL processing."""
+        url_type_descriptions = {
+            'image': 'image',
+            'document': 'document (Word, Excel, PowerPoint, etc.)',
+            'webpage': 'webpage',
+            'unknown': 'URL content'
+        }
+        
+        content_type = url_type_descriptions.get(url_type, 'URL content')
+        
+        prompt_parts = [
+            f"You are an expert analyst. Answer the following questions based on the {content_type} at this URL: {url}",
+            "",
+            "INSTRUCTIONS:",
+            "- Answer each question directly and specifically",
+            "- If the content is not accessible, state that clearly",
+            "- Keep answers concise but complete (under 500 characters each)",
+            "- Format your response as: ANSWER_[NUMBER]: [your answer]",
+            "",
+            "QUESTIONS:",
+            ""
+        ]
+        
+        for i, query in enumerate(queries, 1):
+            prompt_parts.append(f"{i}. {query}")
+        
+        prompt_parts.extend([
+            "",
+            "RESPONSES:",
+            "Provide your answers in the format ANSWER_[NUMBER]: [your answer]"
+        ])
+        
+        return "\n".join(prompt_parts)
+    
+    async def _process_direct_url(self, queries: List[str], url: str, url_type: str) -> Dict[str, str]:
+        """Process queries by sending them directly to Gemini with the URL."""
+        try:
+            # Get API key
+            key_index = get_next_key_index(len(self.gemini_api_keys))
+            api_key = self.gemini_api_keys[key_index]
+            
+            # Prepare the prompt
+            prompt = await self._prepare_direct_url_prompt(queries, url, url_type)
+            
+            # Call Gemini API
+            response_text = await self._call_llm_batch(prompt, api_key)
+            
+            # Parse the response
+            query_numbers = list(range(1, len(queries) + 1))
+            parsed_answers = self._parse_batch_response(response_text, query_numbers)
+            
+            # Ensure all queries have answers
+            results = {}
+            for i, query in enumerate(queries, 1):
+                results[str(i)] = parsed_answers.get(str(i), f"Could not process answer for query {i}")
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error processing direct URL: {e}")
+            return {str(i+1): f"Error processing {url_type} URL: {str(e)[:100]}" for i in range(len(queries))}
+    
     async def _process_batch(self, queries_with_context: List[Tuple[int, str, List[str]]], 
                            query_numbers: List[int], batch_num: int) -> Dict[str, str]:
         """Process a single batch of queries."""
