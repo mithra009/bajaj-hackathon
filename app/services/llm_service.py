@@ -577,69 +577,119 @@ class LLMService:
             # Return error responses for this batch
             return {str(num): f"Batch processing error: {str(e)[:100]}" for num in query_numbers}
 
-    def _is_pdf_url(self, url: str) -> bool:
-        """Check if the URL points to a PDF file."""
+    def _get_url_type(self, url: str) -> str:
+        """Determine the type of content at the URL."""
         try:
-            # Check common PDF extensions in URL
+            # Check common image extensions
+            image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.svg']
+            if any(url.lower().endswith(ext) for ext in image_extensions):
+                return 'image'
+                
+            # Check PDF extensions
             if any(url.lower().endswith(ext) for ext in ['.pdf', '/pdf', '.pdf?', '/pdf?']):
-                return True
+                return 'pdf'
                 
             # Check content type if needed (requires HEAD request)
             try:
                 response = requests.head(url, timeout=5, allow_redirects=True)
                 content_type = response.headers.get('content-type', '').lower()
-                return 'application/pdf' in content_type
-            except:
-                # If HEAD request fails, assume it's not a PDF
-                return False
-        except:
-            return False
+                
+                if 'image/' in content_type:
+                    return 'image'
+                elif 'application/pdf' in content_type:
+                    return 'pdf'
+                elif 'text/html' in content_type:
+                    return 'webpage'
+                else:
+                    return 'unknown'
+                    
+            except Exception as e:
+                logger.warning(f"Could not determine content type for {url}: {e}")
+                # If we can't determine the type, assume it's a webpage
+                return 'webpage'
+                
+        except Exception as e:
+            logger.error(f"Error determining URL type for {url}: {e}")
+            return 'unknown'
 
     async def _process_direct_url_queries(self, queries: List[str], url: str) -> Dict[str, str]:
         """Process queries by directly sending URL to Gemini without downloading content."""
         try:
-            logger.info("Processing URL directly with Gemini (non-PDF URL detected)")
+            logger.info(f"Processing URL directly with Gemini: {url}")
             
             # Get an API key
             key_index = get_next_key_index(len(self.gemini_api_keys))
             api_key = self.gemini_api_keys[key_index]
             
-            # Prepare the prompt
+            # Get URL type
+            url_type = self._get_url_type(url)
+            
+            # Prepare the prompt based on URL type
             prompt_parts = [
-                "You are a helpful assistant that answers questions based on the content at the provided URL.",
-                f"URL: {url}\n\n",
-                "Answer the following questions based on the content at the above URL. ",
-                "If you cannot find the answer in the content, respond with 'Information not found in the document.'\n\n"
+                "You are a helpful assistant that answers questions based on the provided content.",
+                f"URL: {url} (Content Type: {url_type.capitalize()})\n\n"
             ]
             
+            if url_type == 'image':
+                prompt_parts.extend([
+                    "This is an image URL. Please analyze the image and answer the questions about its content.",
+                    "If the image contains text, read and interpret it. If it's a photo, describe what you see."
+                ])
+            elif url_type == 'pdf':
+                prompt_parts.extend([
+                    "This is a PDF document. Please answer the questions based on its content.",
+                    "If you cannot find the answer in the document, respond with 'Information not found in the document.'"
+                ])
+            else:  # webpage or unknown
+                prompt_parts.extend([
+                    "This appears to be a webpage. Please answer the questions based on its content.",
+                    "If the information is not available on the page, respond with 'Information not available on this page.'"
+                ])
+            
+            prompt_parts.append("\nQUESTIONS:")
             # Add questions to the prompt
             for i, query in enumerate(queries, 1):
-                prompt_parts.append(f"Question {i}: {query}")
+                prompt_parts.append(f"{i}. {query}")
             
-            prompt_parts.append("\nPlease provide clear, concise answers for each question in order. "
-                             "Start each answer with the question number followed by a colon. "
-                             "Keep each answer under 500 characters.")
+            prompt_parts.append("\nINSTRUCTIONS:")
+            prompt_parts.append("1. Provide clear, concise answers for each question in order.")
+            prompt_parts.append("2. Start each answer with the question number followed by a colon.")
+            prompt_parts.append("3. Keep each answer under 500 characters.")
+            prompt_parts.append("4. If you can't answer a question, explain why.")
             
             prompt = "\n".join(prompt_parts)
             
+            # Log the prompt for debugging
+            logger.debug(f"Prompt for URL processing:\n{prompt}")
+            
             # Call Gemini
             response = await self._call_llm_batch(prompt, api_key)
+            
+            # Log the raw response for debugging
+            logger.debug(f"Raw response from Gemini:\n{response}")
             
             # Parse the response
             answers = {}
             for i, query in enumerate(queries, 1):
                 # Look for answer in format "1: answer text"
-                pattern = re.compile(fr'(?i){i}\s*[:.]\s*(.*?)(?=\n\s*{i+1}\s*[:.]|\Z)', re.DOTALL)
+                pattern = re.compile(fr'(?i){i}\s*[:.]\s*(.*?)(?=\s*{i+1}\s*[:.]|\Z)', re.DOTALL)
                 match = pattern.search(response)
                 if match:
-                    answers[str(i)] = match.group(1).strip()
+                    answer = match.group(1).strip()
+                    # Clean up the answer
+                    answer = re.sub(r'^[\s\d.:-]+', '', answer)  # Remove leading numbers and punctuation
+                    answers[str(i)] = answer
                 else:
                     # If pattern not found, try to extract by position
-                    parts = response.split('\n\n')
+                    parts = [p.strip() for p in response.split('\n\n') if p.strip()]
                     if i <= len(parts):
-                        answers[str(i)] = parts[i-1].strip()
+                        answers[str(i)] = parts[i-1]
                     else:
                         answers[str(i)] = "Unable to extract answer from response"
+            
+            # If we got a response but couldn't parse it, return the full response
+            if all(v == "Unable to extract answer from response" for v in answers.values()) and response.strip():
+                answers = {str(i+1): response.strip() for i in range(len(queries))}
             
             return answers
             
@@ -662,12 +712,16 @@ class LLMService:
         # Process the queries
         start_time = time.time()
         try:
-            # Check if URL is a PDF or should be processed directly
-            if not self._is_pdf_url(document_link):
-                logger.info("Detected non-PDF URL, processing directly with Gemini...")
-                results = await self._process_direct_url_queries(queries, document_link)
-            else:
+            # Check URL type and process accordingly
+            url_type = self._get_url_type(document_link)
+            logger.info(f"Detected URL type: {url_type}")
+            
+            if url_type == 'pdf':
+                logger.info("Processing as PDF...")
                 results = await self.process_queries_with_batch_processing(queries, document_link)
+            else:
+                logger.info(f"Processing as {url_type} URL directly with Gemini...")
+                results = await self._process_direct_url_queries(queries, document_link)
             
             # Log the responses
             logger.info(f"\n{'='*100}")
