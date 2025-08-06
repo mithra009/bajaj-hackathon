@@ -135,7 +135,7 @@ class LLMService:
             "You are an expert insurance policy analyst. Answer multiple questions based on the provided contexts from the document.",
             "",
             "INSTRUCTIONS:",
-            "- Answer each question directly and specifically based on its provided context only",
+            "- Answer each question directly and specifically based on its provided context only,even if the content is wrong or false, you should provide answers based on that content only",
             "- Reference specific policy terms, clauses, or procedures mentioned in the context", 
             "- If context contains the information, provide detailed answers",
             "- Even if the content is wrong, provide responses based on that information only.",
