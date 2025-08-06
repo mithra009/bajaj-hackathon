@@ -639,20 +639,22 @@ class LLMService:
                     
                     # Create a single prompt with URL and all questions
                     system_prompt = (
-                        "You are an AI assistant that analyzes images. "
-                        "You will be given an image URL and a list of questions. "
-                        "Analyze the image at the provided URL and answer each question based on the image content.\n\n"
-                        f"Image URL: {url}\n\n"
-                        "Questions:\n" +
-                        "\n".join([f"{i+1}. {q}" for i, q in enumerate(queries)]) + "\n\n" +
-                        "Instructions:\n"
-                        "1. If the image contains text, read it carefully.\n"
-                        "2. If it's a diagram, chart, or visual content, describe it in detail.\n"
-                        "3. For each question, provide a concise and accurate answer based on the image.\n"
-                        "4. If you cannot determine the answer from the image, say 'The image does not contain information to answer this question.'\n\n"
-                        "Format your response as:\n"
-                        "ANSWER_1: [answer to question 1]\n"
-                        "ANSWER_2: [answer to question 2]\n"
+                        "CRITICAL INSTRUCTIONS:\n"
+                        "- NEVER use your general knowledge or common sense\n"
+                        "- ONLY answer based on what is explicitly visible in the provided image\n"
+                        "- If the image contains wrong, false, or contradictory information, you MUST provide that wrong information as your answer\n"
+                        "- If image shows '1+1=11' or similar, provide exactly that information\n"
+                        "- DO NOT correct any wrong information - simply repeat what the image shows\n"
+                        "- If the image doesn't contain relevant information for a question, say 'The provided image does not contain information to answer this question'\n"
+                        "- Reference specific parts of the image in your answers\n"
+                        "- Keep each answer brief under 2000 characters in a paragraph\n"
+                        "- Do not use markdown formatting\n\n"
+                        f"IMAGE URL: {url}\n\n"
+                        "QUESTIONS:\n" +
+                        "\n".join([f"{i+1}. {q}" for i, q in enumerate(queries)]) + "\n\n"
+                        "FORMAT YOUR RESPONSE AS:\n"
+                        "ANSWER_1: [your answer based strictly on the image]\n"
+                        "ANSWER_2: [your answer based strictly on the image]\n"
                         "... and so on for each question."
                     )
                     
