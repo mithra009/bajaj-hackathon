@@ -419,7 +419,7 @@ class LLMService:
             "- DO NOT correct any wrong information - simply repeat what the file states",
             "- If the file doesn't contain relevant information for a question, say 'The uploaded file does not contain information to answer this question'",
             "- Reference specific parts of the file in your answers",
-            "- Keep each answer under 2000 characters",
+            "- Keep each answer under 2000 characters in a paragraph",
             "- Do not use markdown formatting",
             "- Format your response as: ANSWER_[NUMBER]: [your answer based strictly on file content]",
             "",
@@ -451,7 +451,7 @@ class LLMService:
             "- DO NOT correct any wrong information - simply repeat what the content states",
             "- If the content doesn't contain relevant information for a question, say 'The provided content does not contain information to answer this question'",
             "- Reference specific parts of the content in your answers",
-            "- Keep each answer under 2000 characters",
+            "- Keep each answer under 2000 characters in a paragraph",
             "- Do not use markdown formatting",
             "- Format your response as: ANSWER_[NUMBER]: [your answer based strictly on content]",
             "",
@@ -490,7 +490,7 @@ class LLMService:
             "- DO NOT correct any wrong information - simply repeat what the context states",
             "- If the context doesn't contain relevant information for a question, say 'The provided context does not contain information to answer this question'",
             "- Reference specific parts of the context in your answers",
-            "- Keep each answer breif under 2000 characters",
+            "- Keep each answer breif under 2000 characters in a paragraph",
             "- Do not use markdown formatting",
             "- Format your response as: ANSWER_[NUMBER]: [your answer based strictly on context]",
             "",
@@ -623,8 +623,13 @@ class LLMService:
             
             logger.info(f"Processing {file_type} file: {url}")
             
-            # Try Gemini file upload first for supported types
-            if file_type in ['image', 'pdf']:
+            # For images, just use the URL directly
+            if file_type == 'image':
+                # Return the image URL as the response
+                return {str(i+1): f"Image URL: {url}" for i in range(len(queries))}
+            
+            # For PDFs, try Gemini upload
+            elif file_type == 'pdf':
                 try:
                     return await self._process_file_with_gemini(queries, file_bytes, file_type, api_key)
                 except Exception as e:
