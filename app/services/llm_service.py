@@ -131,39 +131,11 @@ class LLMService:
         
         return "\n".join(prompt_parts)
 
-    def _clean_response_text(self, text: str) -> str:
-        """Clean up response text by removing unwanted patterns and fixing escaped characters."""
-        if not text:
-            return text
-        
-        # Replace escaped unicode sequences and unwanted patterns
-        try:
-            text = text.encode().decode('unicode_escape')
-        except:
-            pass
-        
-        # Remove common terminal output patterns
-        text = re.sub(r'@\[TerminalName:.*?\]', '', text)
-        text = re.sub(r'@\[ProcessId:.*?\]', '', text)
-        
-        # Fix any remaining escaped quotes
-        text = text.replace('\\"', '"').replace("\\'", "'")
-        
-        # Remove any other common escape sequences
-        text = text.replace('\\n', ' ').replace('\\t', ' ').replace('\\r', '')
-        
-        # Collapse multiple spaces and strip
-        text = ' '.join(text.split())
-        return text.strip()
-
     def _parse_batch_response(self, response_text: str, query_numbers: List[int]) -> Dict[str, str]:
         """Parse the batch response to extract individual answers."""
         answers = {}
         
         try:
-            # Clean the response text first
-            response_text = self._clean_response_text(response_text)
-            
             # Split response by lines and look for ANSWER_ patterns
             lines = response_text.split('\n')
             current_answer = ""
@@ -177,7 +149,7 @@ class LLMService:
                 if answer_match:
                     # Save previous answer if exists
                     if current_num is not None and current_answer.strip():
-                        answers[str(current_num)] = self._clean_response_text(current_answer.strip())
+                        answers[str(current_num)] = current_answer.strip()
                     
                     # Start new answer
                     current_num = int(answer_match.group(1))
@@ -188,7 +160,7 @@ class LLMService:
             
             # Save the last answer
             if current_num is not None and current_answer.strip():
-                answers[str(current_num)] = self._clean_response_text(current_answer.strip())
+                answers[str(current_num)] = current_answer.strip()
             
             # Fallback parsing if the above doesn't work well
             if not answers:
@@ -198,7 +170,7 @@ class LLMService:
                     for i, block in enumerate(answer_blocks[1:], 1):
                         if i <= len(query_numbers):
                             answer = block.strip().split('\n')[0] if block.strip() else "No answer provided"
-                            answers[str(query_numbers[i-1])] = self._clean_response_text(answer[:500])
+                            answers[str(query_numbers[i-1])] = answer[:500]  # Limit length
             
             # Ensure all query numbers have answers
             for num in query_numbers:
@@ -211,7 +183,7 @@ class LLMService:
             parts = response_text.split('\n\n') if '\n\n' in response_text else [response_text]
             for i, num in enumerate(query_numbers):
                 if i < len(parts):
-                    answers[str(num)] = self._clean_response_text(parts[i])
+                    answers[str(num)] = parts[i]
                 else:
                     answers[str(num)] = "Unable to parse answer from batch response"
         
@@ -607,7 +579,38 @@ class LLMService:
 
     async def process_queries(self, queries: List[str], document_link: str) -> Dict[str, str]:
         """Main entry point - uses batch processing for optimal performance."""
-        return await self.process_queries_with_batch_processing(queries, document_link)
+        # Log the document URL and queries at the start
+        logger.info(f"\n{'='*100}")
+        logger.info(f"PROCESSING NEW REQUEST")
+        logger.info(f"{'='*100}")
+        logger.info(f"DOCUMENT_URL: {document_link}")
+        logger.info(f"QUERY_COUNT: {len(queries)}")
+        for i, query in enumerate(queries, 1):
+            logger.info(f"QUERY_{i}: {query}")
+        logger.info(f"{'='*100}\n")
+        
+        # Process the queries
+        start_time = time.time()
+        try:
+            results = await self.process_queries_with_batch_processing(queries, document_link)
+            
+            # Log the responses
+            logger.info(f"\n{'='*100}")
+            logger.info("RESPONSES GENERATED")
+            logger.info(f"{'='*100}")
+            for i, (query, response) in enumerate(zip(queries, results.values()), 1):
+                logger.info(f"\nQUERY_{i}: {query}")
+                logger.info(f"RESPONSE_{i}: {response}")
+            
+            total_time = time.time() - start_time
+            logger.info(f"\nProcessing completed in {total_time:.2f} seconds")
+            logger.info(f"{'='*100}\n")
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error processing queries: {str(e)}", exc_info=True)
+            raise
 
 # Singleton instance for the application
 llm_service = LLMService()
