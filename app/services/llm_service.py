@@ -87,8 +87,8 @@ class LLMService:
 
         # Configuration
         self.max_tokens = 8196
-        self.max_embedding_batch_size = 100  # Number of texts to process in a single batch
-        self.max_tokens_per_batch = 200000  # Conservative limit below the 300k token limit
+        self.max_embedding_batch_size = 50000  # Number of texts to process in a single batch
+        self.max_tokens_per_batch = 3000000  # Conservative limit below the 300k token limit
         self.executor = ThreadPoolExecutor(max_workers=5)
         
         logger.info(f"Initialized with {len(self.gemini_api_keys)} Gemini API keys")
