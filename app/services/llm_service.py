@@ -19,6 +19,12 @@ import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 import openai
 from typing import List, Dict, Any, Optional, Tuple, Union
+import io
+import tempfile
+from PIL import Image
+import openpyxl
+import docx
+import zipfile
 
 # Load environment variables
 load_dotenv()
@@ -96,52 +102,359 @@ class LLMService:
         logger.info(f"Using OpenAI embedding model: {self.embedding_model}")
         logger.info(f"Batch processing: max {self.max_batch_size} queries per batch")
 
-    def _is_image_url(self, url: str) -> bool:
-        """Check if URL points to an image"""
-        try:
-            # Check common image hosting domains
-            image_domains = ['ibb.co', 'imgur.com', 'postimg.cc', 'imageban.ru', 'imageshack.us']
-            parsed = urlparse(url.lower())
-            
-            if any(domain in parsed.netloc for domain in image_domains):
-                return True
-                
-            # Check file extensions
-            image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg']
-            return any(url.lower().endswith(ext) for ext in image_extensions)
-            
-        except Exception:
-            return False
-
-    def _is_pdf_url(self, url: str) -> bool:
-        """Check if URL points to a PDF"""
-        return url.lower().endswith('.pdf') or 'pdf' in url.lower()
-        
-    def _get_url_type(self, url: str) -> Optional[str]:
-        """
-        Determine if the URL points to a PDF.
-        Returns 'pdf' for PDF files, None for all other URLs.
-        """
+    def _get_file_type(self, url: str) -> str:
+        """Determine file type from URL."""
         url_lower = url.lower()
-        if url_lower.endswith('.pdf'):
+        
+        if any(ext in url_lower for ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']):
+            return 'image'
+        elif '.pdf' in url_lower:
             return 'pdf'
-        return None
+        elif any(ext in url_lower for ext in ['.xlsx', '.xls']):
+            return 'excel'
+        elif any(ext in url_lower for ext in ['.docx', '.doc']):
+            return 'word'
+        elif any(ext in url_lower for ext in ['.pptx', '.ppt']):
+            return 'powerpoint'
+        elif '.zip' in url_lower:
+            return 'zip'
+        else:
+            return 'unknown'
+
+    def _download_file(self, url: str) -> bytes:
+        """Download file from URL."""
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            
+            response = requests.get(url, timeout=30, headers=headers)
+            response.raise_for_status()
+            
+            return response.content
+            
+        except Exception as e:
+            logger.error(f"Error downloading file: {e}")
+            raise APIError(f"Failed to download file: {e}")
+
+    async def _upload_to_gemini(self, file_bytes: bytes, mime_type: str, api_key: str) -> Any:
+        """Upload file to Gemini and return file object."""
+        try:
+            genai.configure(api_key=api_key)
+            
+            # Create temporary file
+            with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+                temp_file.write(file_bytes)
+                temp_file_path = temp_file.name
+            
+            try:
+                # Upload to Gemini
+                uploaded_file = genai.upload_file(temp_file_path, mime_type=mime_type)
+                
+                # Wait for processing
+                while uploaded_file.state.name == "PROCESSING":
+                    await asyncio.sleep(1)
+                    uploaded_file = genai.get_file(uploaded_file.name)
+                
+                if uploaded_file.state.name == "FAILED":
+                    raise Exception(f"File processing failed: {uploaded_file.state}")
+                
+                return uploaded_file
+                
+            finally:
+                # Clean up temp file
+                os.unlink(temp_file_path)
+                
+        except Exception as e:
+            logger.error(f"Error uploading to Gemini: {e}")
+            raise Exception(f"Failed to upload file to Gemini: {e}")
+
+    def _extract_text_from_excel(self, file_bytes: bytes) -> str:
+        """Extract text from Excel file."""
+        try:
+            workbook = openpyxl.load_workbook(io.BytesIO(file_bytes))
+            extracted_text = []
+            
+            for sheet_name in workbook.sheetnames:
+                sheet = workbook[sheet_name]
+                extracted_text.append(f"\n--- Sheet: {sheet_name} ---\n")
+                
+                for row in sheet.iter_rows(values_only=True):
+                    row_text = []
+                    for cell in row:
+                        if cell is not None:
+                            row_text.append(str(cell))
+                    if row_text:
+                        extracted_text.append(" | ".join(row_text))
+            
+            return "\n".join(extracted_text)
+            
+        except Exception as e:
+            logger.error(f"Error extracting Excel text: {e}")
+            raise Exception(f"Failed to extract text from Excel: {e}")
+
+    def _extract_text_from_word(self, file_bytes: bytes) -> str:
+        """Extract text from Word document."""
+        try:
+            doc = docx.Document(io.BytesIO(file_bytes))
+            text_parts = []
+            
+            for paragraph in doc.paragraphs:
+                if paragraph.text.strip():
+                    text_parts.append(paragraph.text)
+            
+            # Extract from tables
+            for table in doc.tables:
+                for row in table.rows:
+                    row_text = []
+                    for cell in row.cells:
+                        if cell.text.strip():
+                            row_text.append(cell.text.strip())
+                    if row_text:
+                        text_parts.append(" | ".join(row_text))
+            
+            return "\n".join(text_parts)
+            
+        except Exception as e:
+            logger.error(f"Error extracting Word text: {e}")
+            raise Exception(f"Failed to extract text from Word document: {e}")
+
+    def _extract_text_from_zip(self, file_bytes: bytes) -> str:
+        """Extract text from ZIP file contents."""
+        try:
+            extracted_content = []
+            
+            with zipfile.ZipFile(io.BytesIO(file_bytes)) as zip_file:
+                for file_info in zip_file.filelist:
+                    if file_info.filename.endswith('/'):
+                        continue  # Skip directories
+                    
+                    try:
+                        file_content = zip_file.read(file_info.filename)
+                        file_type = self._get_file_type(file_info.filename)
+                        
+                        extracted_content.append(f"\n--- File: {file_info.filename} ---")
+                        
+                        if file_type == 'pdf':
+                            # Extract PDF text
+                            doc = fitz.open(stream=file_content, filetype="pdf")
+                            for page in doc:
+                                text = page.get_text()
+                                if text.strip():
+                                    extracted_content.append(text)
+                            doc.close()
+                            
+                        elif file_type == 'word':
+                            text = self._extract_text_from_word(file_content)
+                            extracted_content.append(text)
+                            
+                        elif file_type == 'excel':
+                            text = self._extract_text_from_excel(file_content)
+                            extracted_content.append(text)
+                            
+                        else:
+                            # Try to decode as text
+                            try:
+                                text = file_content.decode('utf-8')
+                                extracted_content.append(text)
+                            except:
+                                extracted_content.append(f"[Binary file - {len(file_content)} bytes]")
+                                
+                    except Exception as e:
+                        extracted_content.append(f"[Error processing {file_info.filename}: {e}]")
+            
+            return "\n".join(extracted_content)
+            
+        except Exception as e:
+            logger.error(f"Error extracting ZIP contents: {e}")
+            raise Exception(f"Failed to extract ZIP contents: {e}")
+
+    async def _process_file_with_gemini(self, queries: List[str], file_bytes: bytes, 
+                                      file_type: str, api_key: str) -> Dict[str, str]:
+        """Process file using Gemini's file upload capability."""
+        try:
+            logger.info(f"Processing {file_type} file with Gemini upload...")
+            
+            # Determine MIME type
+            mime_types = {
+                'image': 'image/png',
+                'pdf': 'application/pdf',
+                'excel': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'word': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'powerpoint': 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+            }
+            
+            mime_type = mime_types.get(file_type, 'application/octet-stream')
+            
+            # Upload file to Gemini
+            uploaded_file = await self._upload_to_gemini(file_bytes, mime_type, api_key)
+            
+            # Prepare prompt
+            prompt = self._prepare_file_analysis_prompt(queries)
+            
+            # Generate response
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel(
+                self.model_name,
+                generation_config={
+                    "temperature": 0.1,
+                    "max_output_tokens": 4096,
+                    "top_p": 0.9,
+                    "top_k": 30
+                },
+                safety_settings={
+                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                }
+            )
+            
+            response = await model.generate_content_async([uploaded_file, prompt])
+            
+            # Clean up uploaded file
+            try:
+                genai.delete_file(uploaded_file.name)
+            except:
+                pass
+            
+            # Parse response
+            query_numbers = list(range(1, len(queries) + 1))
+            return self._parse_batch_response(response.text, query_numbers)
+            
+        except Exception as e:
+            logger.error(f"Error processing file with Gemini: {e}")
+            raise Exception(f"Gemini file processing failed: {e}")
+
+    async def _process_text_based_file(self, queries: List[str], file_bytes: bytes, 
+                                     file_type: str, api_key: str) -> Dict[str, str]:
+        """Process text-based files by extracting content first."""
+        try:
+            logger.info(f"Processing {file_type} by extracting text content...")
+            
+            # Extract text based on file type
+            if file_type == 'excel':
+                extracted_text = self._extract_text_from_excel(file_bytes)
+            elif file_type == 'word':
+                extracted_text = self._extract_text_from_word(file_bytes)
+            elif file_type == 'zip':
+                extracted_text = self._extract_text_from_zip(file_bytes)
+            elif file_type == 'pdf':
+                doc = fitz.open(stream=file_bytes, filetype="pdf")
+                extracted_text = ""
+                for page in doc:
+                    extracted_text += page.get_text() + "\n"
+                doc.close()
+            else:
+                # Try to decode as text
+                extracted_text = file_bytes.decode('utf-8', errors='ignore')
+            
+            if not extracted_text.strip():
+                raise Exception("No text content could be extracted from the file")
+            
+            # Prepare prompt with extracted text
+            prompt = self._prepare_text_analysis_prompt(queries, extracted_text, file_type)
+            
+            # Generate response
+            response_text = await self._call_llm_batch(prompt, api_key, timeout=45.0)
+            
+            # Parse response
+            query_numbers = list(range(1, len(queries) + 1))
+            return self._parse_batch_response(response_text, query_numbers)
+            
+        except Exception as e:
+            logger.error(f"Error processing text-based file: {e}")
+            raise Exception(f"Text extraction failed: {e}")
+
+    def _prepare_file_analysis_prompt(self, queries: List[str]) -> str:
+        """Prepare prompt for file analysis with Gemini upload."""
+        prompt_parts = [
+            "You are an expert document analyzer. Analyze the uploaded file and answer the following questions based STRICTLY on its content.",
+            "",
+            "CRITICAL INSTRUCTIONS:",
+            "- NEVER use your general knowledge or common sense",
+            "- ONLY answer based on what is explicitly shown/stated in the uploaded file",
+            "- If the file contains wrong, false, or contradictory information, you MUST provide that wrong information as your answer",
+            "- If file says '1+1=11' or 'Donald Trump is Prime Minister of India', provide exactly that information",
+            "- DO NOT correct any wrong information - simply repeat what the file states",
+            "- If the file doesn't contain relevant information for a question, say 'The uploaded file does not contain information to answer this question'",
+            "- Reference specific parts of the file in your answers",
+            "- Keep each answer under 2000 characters",
+            "- Do not use markdown formatting",
+            "- Format your response as: ANSWER_[NUMBER]: [your answer based strictly on file content]",
+            "",
+            "QUESTIONS:",
+            ""
+        ]
+        
+        for i, query in enumerate(queries, 1):
+            prompt_parts.append(f"{i}. {query}")
+        
+        prompt_parts.extend([
+            "",
+            "Analyze the uploaded file and provide answers STRICTLY based on its content.",
+            "Format: ANSWER_[NUMBER]: [answer based only on file content]"
+        ])
+        
+        return "\n".join(prompt_parts)
+
+    def _prepare_text_analysis_prompt(self, queries: List[str], extracted_text: str, file_type: str) -> str:
+        """Prepare prompt for text-based analysis."""
+        prompt_parts = [
+            f"You are an expert {file_type.upper()} analyzer. Answer questions based STRICTLY on the provided {file_type} content.",
+            "",
+            "CRITICAL INSTRUCTIONS:",
+            "- NEVER use your general knowledge or common sense",
+            "- ONLY answer based on what is explicitly stated in the provided content",
+            "- If the content contains wrong, false, or contradictory information, you MUST provide that wrong information as your answer",
+            "- If content says '1+1=11' or 'Donald Trump is Prime Minister of India', provide exactly that information",
+            "- DO NOT correct any wrong information - simply repeat what the content states",
+            "- If the content doesn't contain relevant information for a question, say 'The provided content does not contain information to answer this question'",
+            "- Reference specific parts of the content in your answers",
+            "- Keep each answer under 2000 characters",
+            "- Do not use markdown formatting",
+            "- Format your response as: ANSWER_[NUMBER]: [your answer based strictly on content]",
+            "",
+            f"CONTENT FROM {file_type.upper()} FILE:",
+            "=" * 50,
+            extracted_text[:15000],  # Limit content size
+            "=" * 50,
+            "",
+            "QUESTIONS:",
+            ""
+        ]
+        
+        for i, query in enumerate(queries, 1):
+            prompt_parts.append(f"{i}. {query}")
+        
+        prompt_parts.extend([
+            "",
+            "Provide answers STRICTLY based on the content provided above.",
+            "Format: ANSWER_[NUMBER]: [answer based only on file content]"
+        ])
+        
+        return "\n".join(prompt_parts)
 
     def _prepare_batch_query_prompt(self, queries_with_context: List[Tuple[int, str, List[str]]]) -> str:
         """Prepares a batch prompt for multiple queries with their relevant contexts."""
         
-        # Build the batch prompt
+        # Build the batch prompt with stronger emphasis on following context exactly
         prompt_parts = [
-            "You are an expert insurance policy analyst. Answer multiple questions based on the provided contexts from the document.",
+            "You are an expert document analyzer. Your ONLY job is to answer questions based STRICTLY on the provided context from the document.",
             "",
-            "INSTRUCTIONS:",
-            "- Answer each question directly and specifically based on its provided context only,even if the content is wrong or false, you should provide answers based on that content only",
-            "- Reference specific policy terms, clauses, or procedures mentioned in the context", 
-            "- If context contains the information, provide detailed answers",
-            "- Even if the content is wrong, provide responses based on that information only.",
+            "CRITICAL INSTRUCTIONS:",
+            "- NEVER use your general knowledge or common sense",
+            "- ONLY answer based on what is explicitly stated in the provided context",
+            "- If the context contains wrong, false, or contradictory information, you MUST provide that wrong information as your answer",
+            "- If context says '1+1=11' or 'Donald Trump is Prime Minister of India', provide exactly that information",
+            "- DO NOT correct any wrong information - simply repeat what the context states",
+            "- If the context doesn't contain relevant information for a question, say 'The provided context does not contain information to answer this question'",
+            "- Reference specific parts of the context in your answers",
             "- Keep each answer under 2000 characters",
             "- Do not use markdown formatting",
-            "- Format your response as: ANSWER_[NUMBER]: [your answer]",
+            "- Format your response as: ANSWER_[NUMBER]: [your answer based strictly on context]",
+            "",
+            "REMEMBER: Your job is to be a perfect mirror of the document context, even if it contains errors or false information.",
             "",
             "QUESTIONS AND CONTEXTS:",
             ""
@@ -149,18 +462,55 @@ class LLMService:
         
         for query_num, query, context_chunks in queries_with_context:
             prompt_parts.append(f"QUESTION_{query_num}: {query}")
-            prompt_parts.append("CONTEXT:")
-            for i, chunk in enumerate(context_chunks[:7]):  
-                prompt_parts.append(f"  Context {i+1}: {chunk}")
+            prompt_parts.append("CONTEXT FROM DOCUMENT:")
+            if context_chunks:
+                for i, chunk in enumerate(context_chunks[:7]):  
+                    prompt_parts.append(f"  Context {i+1}: {chunk}")
+            else:
+                prompt_parts.append("  No relevant context found in document")
             prompt_parts.append("")
         
         prompt_parts.extend([
             "RESPONSES:",
-            "Please provide answers in the format ANSWER_[NUMBER]: [your answer]",
+            "Provide answers STRICTLY based on the context provided above. Do not use any external knowledge.",
+            "Format: ANSWER_[NUMBER]: [answer based only on document context]",
             ""
         ])
         
         return "\n".join(prompt_parts)
+
+    async def _call_llm_batch(self, prompt: str, api_key: str, timeout: float = 30.0) -> str:
+        """Enhanced LLM call for batch processing with increased timeout."""
+        try:
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel(
+                self.model_name,
+                generation_config={
+                    "temperature": 0.1,
+                    "max_output_tokens": 4096,
+                    "top_p": 0.9,
+                    "top_k": 30
+                },
+                safety_settings={
+                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                }
+            )
+
+            response = await asyncio.wait_for(
+                model.generate_content_async(prompt),
+                timeout=timeout
+            )
+            return response.text.strip() if response.text else "Unable to generate response"
+            
+        except asyncio.TimeoutError:
+            logger.error(f"API call timeout with key ...{api_key[-4:]}")
+            raise Exception(f"Request timeout after {timeout}s - please try again")
+        except Exception as e:
+            logger.error(f"API call failed with key ...{api_key[-4:]}: {e}")
+            raise Exception(f"Gemini API call failed: {str(e)[:100]}")
 
     def _parse_batch_response(self, response_text: str, query_numbers: List[int]) -> Dict[str, str]:
         """Parse the batch response to extract individual answers."""
@@ -201,12 +551,12 @@ class LLMService:
                     for i, block in enumerate(answer_blocks[1:], 1):
                         if i <= len(query_numbers):
                             answer = block.strip().split('\n')[0] if block.strip() else "No answer provided"
-                            answers[str(query_numbers[i-1])] = answer[:500]  # Limit length
+                            answers[str(query_numbers[i-1])] = answer[:1000]  # Limit length
             
             # Ensure all query numbers have answers
             for num in query_numbers:
                 if str(num) not in answers:
-                    answers[str(num)] = "Unable to extract answer from batch response"
+                    answers[str(num)] = "Unable to extract answer from response"
                     
         except Exception as e:
             logger.error(f"Error parsing batch response: {e}")
@@ -216,10 +566,39 @@ class LLMService:
                 if i < len(parts):
                     answers[str(num)] = parts[i]
                 else:
-                    answers[str(num)] = "Unable to parse answer from batch response"
+                    answers[str(num)] = "Unable to parse answer from response"
         
         return answers
 
+    async def _process_non_pdf_file(self, queries: List[str], url: str) -> Dict[str, str]:
+        """Process non-PDF files (images, Excel, Word, etc.)."""
+        try:
+            # Download file
+            file_bytes = await asyncio.to_thread(self._download_file, url)
+            file_type = self._get_file_type(url)
+            
+            # Get API key
+            key_index = get_next_key_index(len(self.gemini_api_keys))
+            api_key = self.gemini_api_keys[key_index]
+            
+            logger.info(f"Processing {file_type} file: {url}")
+            
+            # Try Gemini file upload first for supported types
+            if file_type in ['image', 'pdf']:
+                try:
+                    return await self._process_file_with_gemini(queries, file_bytes, file_type, api_key)
+                except Exception as e:
+                    logger.warning(f"Gemini upload failed for {file_type}, trying text extraction: {e}")
+            
+            # Fallback to text extraction for other types or if upload fails
+            return await self._process_text_based_file(queries, file_bytes, file_type, api_key)
+            
+        except Exception as e:
+            logger.error(f"Error processing non-PDF file: {e}")
+            error_msg = f"Error processing {self._get_file_type(url)} file: {str(e)[:200]}"
+            return {str(i+1): error_msg for i in range(len(queries))}
+
+    # [Include all the existing PDF processing methods here - they remain unchanged]
     def _estimate_token_count(self, text: str) -> int:
         """Accurate token estimation for text-embedding-3-small."""
         return int((len(text) / 4) * 1.1)
@@ -416,98 +795,22 @@ class LLMService:
             logger.error(f"Error extracting text from PDF: {e}")
             raise APIError(f"Failed to extract text from PDF: {e}")
 
-    async def _call_llm_batch(self, prompt: str, api_key: str, timeout: float = 30.0) -> str:
-        """Enhanced LLM call for batch processing with increased timeout."""
-        try:
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel(
-                self.model_name,
-                generation_config={
-                    "temperature": 0.2,
-                    "max_output_tokens": 4096,  # Increased for batch responses
-                    "top_p": 0.9,
-                    "top_k": 30
-                },
-                safety_settings={
-                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-                }
-            )
-
-            response = await asyncio.wait_for(
-                model.generate_content_async(prompt),
-                timeout=timeout
-            )
-            return response.text.strip() if response.text else "Unable to generate batch response"
-            
-        except asyncio.TimeoutError:
-            logger.error(f"Batch API call timeout with key ...{api_key[-4:]}")
-            raise Exception(f"Batch request timeout after {timeout}s - please try again")
-        except Exception as e:
-            logger.error(f"Batch API call failed with key ...{api_key[-4:]}: {e}")
-            raise Exception(f"Gemini batch API call failed: {str(e)[:100]}")
-
-    def _get_content_length(self, url: str) -> int:
-        """Get the content length of a URL in bytes."""
-        try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            response = requests.head(url, headers=headers, timeout=10, allow_redirects=True)
-            response.raise_for_status()
-            
-            content_length = int(response.headers.get('content-length', 0))
-            logger.info(f"Content length for {url}: {content_length} bytes")
-            return content_length
-            
-        except Exception as e:
-            logger.warning(f"Could not determine content length for {url}: {e}")
-            return 0
-            
-    def _download_document(self, url: str) -> bytes:
-        """Download document with better error handling and size check."""
-        try:
-            # First check content length
-            content_length = self._get_content_length(url)
-            MAX_SIZE = 100 * 1024 * 1024  # 100MB
-            
-            if content_length > MAX_SIZE:
-                logger.warning(f"Document size ({content_length} bytes) exceeds maximum allowed size ({MAX_SIZE} bytes)")
-                raise APIError("Document is too large to download. Maximum size is 100MB.")
-                
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': '*/*'
-            }
-            
-            response = requests.get(url, headers=headers, timeout=30, stream=True)
-            response.raise_for_status()
-            
-            # Verify size again in case content-length was not available or incorrect
-            content = response.content
-            if len(content) > MAX_SIZE:
-                logger.warning(f"Downloaded document size ({len(content)} bytes) exceeds maximum allowed size")
-                raise APIError("Downloaded document is too large. Maximum size is 100MB.")
-                
-            return content
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error downloading document: {e}")
-            raise APIError(f"Failed to download document: {e}")
-            
     def _download_pdf_optimized(self, url: str) -> bytes:
         """Optimized PDF download with better error handling."""
         try:
-            content = self._download_document(url)
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'application/pdf,*/*'
+            }
             
-            # Additional PDF-specific validation
-            content_type = requests.head(url, timeout=5).headers.get('content-type', '').lower()
+            response = requests.get(url, timeout=15, headers=headers, stream=True)
+            response.raise_for_status()
+            
+            content_type = response.headers.get('content-type', '').lower()
             if 'pdf' not in content_type and not url.lower().endswith('.pdf'):
-                logger.warning(f"Unexpected content type for PDF: {content_type}")
-                
-            return content
+                logger.warning(f"Unexpected content type: {content_type}")
+            
+            return response.content
             
         except Exception as e:
             logger.error(f"Error downloading PDF: {e}")
@@ -624,103 +927,6 @@ class LLMService:
             logger.error(f"Critical error in batch processing: {e}", exc_info=True)
             return {str(i+1): f"Processing failed: {str(e)[:100]}" for i in range(len(queries))}
 
-    async def _prepare_direct_url_prompt(self, queries: List[str], url: str, url_type: str) -> str:
-        """Prepare a prompt for direct URL processing."""
-        url_type_descriptions = {
-            'image': 'image',
-            'document': 'document (Word, Excel, PowerPoint, etc.)',
-            'webpage': 'webpage',
-            'unknown': 'URL content'
-        }
-        
-        content_type = url_type_descriptions.get(url_type, 'URL content')
-        
-        prompt_parts = [
-            f"You are an expert analyst. Answer the following questions based on the {content_type} at this URL: {url}",
-            "",
-            "INSTRUCTIONS:",
-            "- Answer each question directly and specifically based on its provided context in the url only",
-            "- Reference specific policy terms, clauses, or procedures mentioned in the context", 
-            "- If context contains the information, provide detailed answers",
-            "- Even if the content is wrong, provide responses based on that information only.",
-            "- Keep each answer under 2000 characters",
-            "- Do not use markdown formatting",
-            "- Format your response as: ANSWER_[NUMBER]: [your answer]",
-            "",
-            "QUESTIONS:",
-            ""
-        ]
-        
-        for i, query in enumerate(queries, 1):
-            prompt_parts.append(f"{i}. {query}")
-        
-        prompt_parts.extend([
-            "",
-            "RESPONSES:",
-            "Provide your answers in the format ANSWER_[NUMBER]: [your answer]"
-        ])
-        
-        return "\n".join(prompt_parts)
-    
-    def _convert_google_drive_url(self, url: str) -> str:
-        """Convert Google Drive URL to direct download link."""
-        try:
-            # Handle Google Drive sharing links
-            if 'drive.google.com' in url and '/file/d/' in url:
-                file_id = url.split('/file/d/')[1].split('/')[0]
-                return f"https://drive.google.com/uc?export=download&id={file_id}"
-            return url
-        except Exception as e:
-            logger.warning(f"Error converting Google Drive URL: {e}")
-            return url
-    
-    async def _process_direct_url(self, queries: List[str], url: str, url_type: str) -> Dict[str, str]:
-        """Process queries by sending them directly to Gemini with the URL."""
-        try:
-            # Handle Google Drive URLs
-            processed_url = self._convert_google_drive_url(url)
-            
-            # Get API key
-            key_index = get_next_key_index(len(self.gemini_api_keys))
-            api_key = self.gemini_api_keys[key_index]
-            
-            # Prepare the prompt with the processed URL
-            prompt = await self._prepare_direct_url_prompt(queries, processed_url, url_type)
-            
-            # Call Gemini API
-            response_text = await self._call_llm_batch(prompt, api_key)
-            
-            # Parse the response
-            query_numbers = list(range(1, len(queries) + 1))
-            parsed_answers = self._parse_batch_response(response_text, query_numbers)
-            
-            # Check if we got a content not accessible message
-            if any('content not accessible' in str(v).lower() for v in parsed_answers.values()):
-                logger.warning(f"Content not accessible at URL: {url}")
-                if processed_url != url:
-                    logger.info("Trying with original URL...")
-                    return await self._process_direct_url(queries, url, url_type)
-            
-            # Ensure all queries have answers
-            results = {}
-            for i, query in enumerate(queries, 1):
-                answer = parsed_answers.get(str(i), f"Could not process answer for query {i}")
-                # If content is not accessible, provide a more helpful message
-                if 'content not accessible' in str(answer).lower():
-                    answer = ("I couldn't access the content at the provided URL. "
-                             "Please ensure the file is publicly accessible and try again. "
-                             "For Google Drive links, make sure the sharing settings allow 'Anyone with the link' to view.")
-                results[str(i)] = answer
-            
-            return results
-            
-        except Exception as e:
-            logger.error(f"Error processing direct URL: {e}")
-            error_msg = (f"Error processing {url_type} URL. "
-                        "Please ensure the content is publicly accessible. "
-                        f"Details: {str(e)[:100]}")
-            return {str(i+1): error_msg for i in range(len(queries))}
-    
     async def _process_batch(self, queries_with_context: List[Tuple[int, str, List[str]]], 
                            query_numbers: List[int], batch_num: int) -> Dict[str, str]:
         """Process a single batch of queries."""
@@ -752,8 +958,8 @@ class LLMService:
         """
         Main entry point for processing queries.
         
-        For PDFs under 100MB: Uses batch processing with chunking and embeddings.
-        For other URLs or large files: Sends directly to Gemini with appropriate context.
+        For PDFs: Uses batch processing with chunking and embeddings.
+        For other file types: Processes directly with appropriate handling.
         """
         # Log the document URL and queries at the start
         logger.info(f"\n{'='*100}")
@@ -767,32 +973,18 @@ class LLMService:
         
         start_time = time.time()
         try:
-            # Determine URL type
-            url_type = self._get_url_type(document_link)
-            logger.info(f"Detected URL type: {url_type}")
+            # Determine file type
+            file_type = self._get_file_type(document_link)
+            logger.info(f"Detected file type: {file_type}")
             
-            if url_type == 'pdf':
-                try:
-                    # Check content length first
-                    content_length = self._get_content_length(document_link)
-                    MAX_SIZE = 100 * 1024 * 1024  # 100MB
-                    
-                    if 0 < content_length <= MAX_SIZE:
-                        # Process as PDF with chunking for files under 100MB
-                        logger.info(f"Processing as PDF with chunking and embeddings ({content_length} bytes)")
-                        results = await self.process_queries_with_batch_processing(queries, document_link)
-                    else:
-                        # For large or unknown size PDFs, process directly
-                        logger.info(f"Processing large PDF ({content_length} bytes) with direct Gemini call...")
-                        results = await self._process_direct_url(queries, document_link, 'pdf')
-                        
-                except Exception as e:
-                    logger.warning(f"Error in PDF processing, falling back to direct URL: {e}")
-                    results = await self._process_direct_url(queries, document_link, 'pdf')
+            if file_type == 'pdf':
+                # Use batch processing for PDFs
+                logger.info("Processing as PDF with chunking and embeddings...")
+                results = await self.process_queries_with_batch_processing(queries, document_link)
             else:
-                # For non-PDF URLs, process directly
-                logger.info(f"Processing as {url_type or 'unknown'} URL with direct Gemini call...")
-                results = await self._process_direct_url(queries, document_link, url_type or 'document')
+                # For non-PDF files, process directly
+                logger.info(f"Processing as {file_type} file with direct processing...")
+                results = await self._process_non_pdf_file(queries, document_link)
             
             # Log the responses
             logger.info(f"\n{'='*100}")
