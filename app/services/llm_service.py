@@ -324,6 +324,48 @@ class LLMService:
             logger.error(f"API call failed with key ...{api_key[-4:]}: {e}")
             raise Exception(f"Gemini API call failed: {e}")
 
+    def _is_pdf_url(self, url: str) -> bool:
+        """Check if the URL points to a PDF file."""
+        parsed = urlparse(url)
+        path = parsed.path.lower()
+        return path.endswith('.pdf')
+
+    async def _process_direct_url_queries(self, queries: List[str], url: str, api_key: str) -> Dict[str, str]:
+        """Process queries by directly sending URL to Gemini without downloading content."""
+        try:
+            logger.info("\nProcessing URL directly with Gemini...")
+            start_time = time.time()
+            
+            # Prepare prompt with URL and queries
+            prompt = (
+                "You are a helpful assistant that answers questions based on the provided URL.\n"
+                "IMPORTANT: Respond in simple paragraphs without markdown formatting.\n\n"
+                f"URL: {url}\n\n"
+                "QUESTIONS:\n"
+            )
+            
+            for i, query in enumerate(queries, 1):
+                prompt += f"{i}. {query}\n"
+                
+            prompt += ("\n"
+                     "Provide clear, concise answers for each question in order. "
+                     "Start each answer with the question number followed by a colon. "
+                     "Keep each answer under 500 characters.")
+            
+            # Call the LLM with the URL and queries
+            logger.info("\nCalling Gemini API with URL and queries...")
+            llm_response_text = await self._call_llm_with_single_key(prompt, api_key)
+            
+            # Parse the response
+            final_responses = self._parse_llm_response(llm_response_text, len(queries))
+            
+            logger.info(f"URL processing completed in {time.time() - start_time:.2f}s")
+            return final_responses
+            
+        except Exception as e:
+            logger.error(f"Error in _process_direct_url_queries: {e}")
+            raise Exception(f"Gemini API call failed: {e}")
+
     async def process_queries(self, queries: List[str], document_link: str) -> Dict[str, str]:
         """Processes all queries in a single RAG-based batch.
         
@@ -355,6 +397,11 @@ class LLMService:
             key_index = get_next_key_index(len(self.gemini_api_keys))
             api_key_for_request = self.gemini_api_keys[key_index]
             logger.info(f"Using Gemini key index: {key_index} (...{api_key_for_request[-4:]})")
+
+            # Check if URL is a PDF or direct URL
+            if not self._is_pdf_url(document_link):
+                logger.info("Detected non-PDF URL, processing directly with Gemini...")
+                return await self._process_direct_url_queries(queries, document_link, api_key_for_request)
 
             # 2. Download and chunk document
             logger.info("\nDownloading and processing document...")
