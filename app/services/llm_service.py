@@ -577,8 +577,78 @@ class LLMService:
             # Return error responses for this batch
             return {str(num): f"Batch processing error: {str(e)[:100]}" for num in query_numbers}
 
+    def _is_pdf_url(self, url: str) -> bool:
+        """Check if the URL points to a PDF file."""
+        try:
+            # Check common PDF extensions in URL
+            if any(url.lower().endswith(ext) for ext in ['.pdf', '/pdf', '.pdf?', '/pdf?']):
+                return True
+                
+            # Check content type if needed (requires HEAD request)
+            try:
+                response = requests.head(url, timeout=5, allow_redirects=True)
+                content_type = response.headers.get('content-type', '').lower()
+                return 'application/pdf' in content_type
+            except:
+                # If HEAD request fails, assume it's not a PDF
+                return False
+        except:
+            return False
+
+    async def _process_direct_url_queries(self, queries: List[str], url: str) -> Dict[str, str]:
+        """Process queries by directly sending URL to Gemini without downloading content."""
+        try:
+            logger.info("Processing URL directly with Gemini (non-PDF URL detected)")
+            
+            # Get an API key
+            key_index = get_next_key_index(len(self.gemini_api_keys))
+            api_key = self.gemini_api_keys[key_index]
+            
+            # Prepare the prompt
+            prompt_parts = [
+                "You are a helpful assistant that answers questions based on the content at the provided URL.",
+                f"URL: {url}\n\n",
+                "Answer the following questions based on the content at the above URL. ",
+                "If you cannot find the answer in the content, respond with 'Information not found in the document.'\n\n"
+            ]
+            
+            # Add questions to the prompt
+            for i, query in enumerate(queries, 1):
+                prompt_parts.append(f"Question {i}: {query}")
+            
+            prompt_parts.append("\nPlease provide clear, concise answers for each question in order. "
+                             "Start each answer with the question number followed by a colon. "
+                             "Keep each answer under 500 characters.")
+            
+            prompt = "\n".join(prompt_parts)
+            
+            # Call Gemini
+            response = await self._call_llm_batch(prompt, api_key)
+            
+            # Parse the response
+            answers = {}
+            for i, query in enumerate(queries, 1):
+                # Look for answer in format "1: answer text"
+                pattern = re.compile(fr'(?i){i}\s*[:.]\s*(.*?)(?=\n\s*{i+1}\s*[:.]|\Z)', re.DOTALL)
+                match = pattern.search(response)
+                if match:
+                    answers[str(i)] = match.group(1).strip()
+                else:
+                    # If pattern not found, try to extract by position
+                    parts = response.split('\n\n')
+                    if i <= len(parts):
+                        answers[str(i)] = parts[i-1].strip()
+                    else:
+                        answers[str(i)] = "Unable to extract answer from response"
+            
+            return answers
+            
+        except Exception as e:
+            logger.error(f"Error processing direct URL queries: {e}", exc_info=True)
+            return {str(i+1): f"Error processing URL: {str(e)[:100]}" for i in range(len(queries))}
+
     async def process_queries(self, queries: List[str], document_link: str) -> Dict[str, str]:
-        """Main entry point - uses batch processing for optimal performance."""
+        """Main entry point - processes queries using appropriate method based on URL type."""
         # Log the document URL and queries at the start
         logger.info(f"\n{'='*100}")
         logger.info(f"PROCESSING NEW REQUEST")
@@ -592,7 +662,12 @@ class LLMService:
         # Process the queries
         start_time = time.time()
         try:
-            results = await self.process_queries_with_batch_processing(queries, document_link)
+            # Check if URL is a PDF or should be processed directly
+            if not self._is_pdf_url(document_link):
+                logger.info("Detected non-PDF URL, processing directly with Gemini...")
+                results = await self._process_direct_url_queries(queries, document_link)
+            else:
+                results = await self.process_queries_with_batch_processing(queries, document_link)
             
             # Log the responses
             logger.info(f"\n{'='*100}")
@@ -610,7 +685,8 @@ class LLMService:
             
         except Exception as e:
             logger.error(f"Error processing queries: {str(e)}", exc_info=True)
-            raise
+            # Return error responses for all queries
+            return {str(i+1): f"Error: {str(e)[:100]}" for i in range(len(queries))}
 
 # Singleton instance for the application
 llm_service = LLMService()
