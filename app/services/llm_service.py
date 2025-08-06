@@ -131,11 +131,100 @@ class LLMService:
         
         return "\n".join(prompt_parts)
 
+    def _prepare_url_batch_query_prompt(self, batch_queries: List[str], query_numbers: List[int], document_url: str) -> str:
+        """Prepares a batch prompt for multiple queries with direct URL access."""
+        
+        prompt_parts = [
+            "You are an expert document analyst. Answer multiple questions based on the document accessible at the provided URL.",
+            "",
+            f"DOCUMENT URL: {document_url}",
+            "",
+            "INSTRUCTIONS:",
+            "- Access and analyze the document at the provided URL",
+            "- Answer each question directly and specifically based on the document content",
+            "- Reference specific information, terms, clauses, or procedures mentioned in the document", 
+            "- Provide detailed answers based on the document content",
+            "- If some parts cannot be answered from the document, use your general knowledge",
+            "- Keep each answer comprehensive but concise (under 500 characters)",
+            "- Do not use markdown formatting",
+            "- Format your response as: ANSWER_[NUMBER]: [your answer]",
+            "",
+            "QUESTIONS:",
+            ""
+        ]
+        
+        for i, query in enumerate(batch_queries):
+            prompt_parts.append(f"QUESTION_{query_numbers[i]}: {query}")
+        
+        prompt_parts.extend([
+            "",
+            "RESPONSES:",
+            "Please analyze the document at the provided URL and provide answers in the format ANSWER_[NUMBER]: [your answer]",
+            ""
+        ])
+        
+        return "\n".join(prompt_parts)
+
+    def _clean_response_text(self, text: str) -> str:
+        """Clean up response text by removing unwanted patterns and fixing escaped characters."""
+        if not text:
+            return text
+        
+        # Replace escaped unicode sequences and unwanted patterns
+        try:
+            text = text.encode().decode('unicode_escape')
+        except:
+            pass
+        
+        # Remove common terminal output patterns
+        text = re.sub(r'@\[TerminalName:.*?\]', '', text)
+        text = re.sub(r'@\[ProcessId:.*?\]', '', text)
+        
+        # Fix any remaining escaped quotes
+        text = text.replace('\\"', '"').replace("\\'", "'")
+        
+        # Remove any other common escape sequences
+        text = text.replace('\\n', ' ').replace('\\t', ' ').replace('\\r', '')
+        
+        # Collapse multiple spaces and strip
+        text = ' '.join(text.split())
+        return text.strip()
+
     def _parse_batch_response(self, response_text: str, query_numbers: List[int]) -> Dict[str, str]:
         """Parse the batch response to extract individual answers."""
         answers = {}
         
         try:
+            # Clean the response text first
+            response_text = self._clean_response_text(response_text)
+            
+            # Try to parse as JSON first (handles the "answers": [...] format)
+            try:
+                import json
+                # Look for JSON structure in the response
+                if '"answers"' in response_text or '"ANSWER_' in response_text:
+                    # Extract JSON portion
+                    start_idx = response_text.find('{')
+                    end_idx = response_text.rfind('}') + 1
+                    if start_idx != -1 and end_idx > start_idx:
+                        json_text = response_text[start_idx:end_idx]
+                        parsed_json = json.loads(json_text)
+                        
+                        if 'answers' in parsed_json and isinstance(parsed_json['answers'], list):
+                            # Handle answers array format
+                            answers_list = parsed_json['answers']
+                            for i, answer in enumerate(answers_list):
+                                if i < len(query_numbers):
+                                    if isinstance(answer, str) and answer.strip():
+                                        answers[str(query_numbers[i])] = self._clean_response_text(answer)
+                                    else:
+                                        answers[str(query_numbers[i])] = "No valid answer provided"
+                            return answers
+            except (json.JSONDecodeError, ValueError, KeyError):
+                # Continue with original parsing logic if JSON parsing fails
+                pass
+            
+            # Original parsing logic for ANSWER_X: format
             # Split response by lines and look for ANSWER_ patterns
             lines = response_text.split('\n')
             current_answer = ""
@@ -149,7 +238,7 @@ class LLMService:
                 if answer_match:
                     # Save previous answer if exists
                     if current_num is not None and current_answer.strip():
-                        answers[str(current_num)] = current_answer.strip()
+                        answers[str(current_num)] = self._clean_response_text(current_answer.strip())
                     
                     # Start new answer
                     current_num = int(answer_match.group(1))
@@ -160,7 +249,7 @@ class LLMService:
             
             # Save the last answer
             if current_num is not None and current_answer.strip():
-                answers[str(current_num)] = current_answer.strip()
+                answers[str(current_num)] = self._clean_response_text(current_answer.strip())
             
             # Fallback parsing if the above doesn't work well
             if not answers:
@@ -170,7 +259,7 @@ class LLMService:
                     for i, block in enumerate(answer_blocks[1:], 1):
                         if i <= len(query_numbers):
                             answer = block.strip().split('\n')[0] if block.strip() else "No answer provided"
-                            answers[str(query_numbers[i-1])] = answer[:500]  # Limit length
+                            answers[str(query_numbers[i-1])] = self._clean_response_text(answer[:500])
             
             # Ensure all query numbers have answers
             for num in query_numbers:
@@ -183,7 +272,7 @@ class LLMService:
             parts = response_text.split('\n\n') if '\n\n' in response_text else [response_text]
             for i, num in enumerate(query_numbers):
                 if i < len(parts):
-                    answers[str(num)] = parts[i]
+                    answers[str(num)] = self._clean_response_text(parts[i])
                 else:
                     answers[str(num)] = "Unable to parse answer from batch response"
         
@@ -453,40 +542,57 @@ class LLMService:
             logger.info(f"DOCUMENT: {document_link}")
             logger.info(f"{'='*100}")
 
-            # 1. Download and process document
-            logger.info("Downloading and processing document...")
-            download_start = time.time()
-            pdf_bytes = await asyncio.to_thread(self._download_pdf_optimized, document_link)
-            doc_chunks = await asyncio.to_thread(self.extract_chunks_optimized, pdf_bytes)
+            # Check if the document is a PDF or other URL
+            is_pdf = document_link.lower().endswith('.pdf') or 'pdf' in document_link.lower()
+            doc_chunks = []
+            doc_embeddings = np.array([])
             
-            if not doc_chunks:
-                raise ValueError("No text extracted from document")
-                
-            logger.info(f"Document processed in {time.time() - download_start:.2f}s | Chunks: {len(doc_chunks)}")
+            if is_pdf:
+                try:
+                    # 1. Download and process PDF document
+                    logger.info("Downloading and processing PDF document...")
+                    download_start = time.time()
+                    pdf_bytes = await asyncio.to_thread(self._download_pdf_optimized, document_link)
+                    doc_chunks = await asyncio.to_thread(self.extract_chunks_optimized, pdf_bytes)
+                    
+                    if not doc_chunks:
+                        raise ValueError("No text extracted from PDF document")
+                        
+                    logger.info(f"PDF document processed in {time.time() - download_start:.2f}s | Chunks: {len(doc_chunks)}")
 
-            # 2. Generate embeddings
-            logger.info("Generating embeddings...")
-            embed_start = time.time()
+                    # 2. Generate embeddings for PDF content
+                    logger.info("Generating embeddings for PDF...")
+                    embed_start = time.time()
+                    
+                    total_doc_tokens = sum(self._estimate_token_count(chunk) for chunk in doc_chunks)
+                    total_query_tokens = sum(self._estimate_token_count(q) for q in queries)
+                    
+                    logger.info(f"Document tokens: {total_doc_tokens:,}, Query tokens: {total_query_tokens:,}")
+                    
+                    if total_doc_tokens + total_query_tokens < self.max_embedding_tokens_per_request:
+                        all_texts = doc_chunks + queries
+                        all_embeddings = await self._get_embeddings_batch(all_texts)
+                        doc_embeddings = np.array(all_embeddings[:len(doc_chunks)])
+                        query_embeddings = all_embeddings[len(doc_chunks):]
+                    else:
+                        doc_emb_task = asyncio.create_task(self._get_embeddings_batch(doc_chunks))
+                        query_emb_task = asyncio.create_task(self._get_embeddings_batch(queries))
+                        
+                        doc_embeddings, query_embeddings = await asyncio.gather(doc_emb_task, query_emb_task)
+                        doc_embeddings = np.array(doc_embeddings)
+                    
+                    embed_time = time.time() - embed_start
+                    logger.info(f"Embeddings generated in {embed_time:.2f}s")
+                    
+                except Exception as pdf_error:
+                    logger.warning(f"Failed to process as PDF: {pdf_error}")
+                    logger.info("Switching to direct URL processing...")
+                    is_pdf = False
             
-            total_doc_tokens = sum(self._estimate_token_count(chunk) for chunk in doc_chunks)
-            total_query_tokens = sum(self._estimate_token_count(q) for q in queries)
-            
-            logger.info(f"Document tokens: {total_doc_tokens:,}, Query tokens: {total_query_tokens:,}")
-            
-            if total_doc_tokens + total_query_tokens < self.max_embedding_tokens_per_request:
-                all_texts = doc_chunks + queries
-                all_embeddings = await self._get_embeddings_batch(all_texts)
-                doc_embeddings = np.array(all_embeddings[:len(doc_chunks)])
-                query_embeddings = all_embeddings[len(doc_chunks):]
-            else:
-                doc_emb_task = asyncio.create_task(self._get_embeddings_batch(doc_chunks))
-                query_emb_task = asyncio.create_task(self._get_embeddings_batch(queries))
-                
-                doc_embeddings, query_embeddings = await asyncio.gather(doc_emb_task, query_emb_task)
-                doc_embeddings = np.array(doc_embeddings)
-            
-            embed_time = time.time() - embed_start
-            logger.info(f"Embeddings generated in {embed_time:.2f}s")
+            if not is_pdf:
+                # Process as direct URL - send URL directly to Gemini
+                logger.info("Processing as direct URL (non-PDF document)")
+                query_embeddings = await self._get_embeddings_batch(queries)
 
             # 3. Process queries in batches
             logger.info("Processing queries in batches...")
@@ -503,21 +609,28 @@ class LLMService:
                 end_idx = min(start_idx + self.max_batch_size, len(queries))
                 
                 batch_queries = queries[start_idx:end_idx]
-                batch_query_embeddings = query_embeddings[start_idx:end_idx]
                 batch_query_numbers = list(range(start_idx + 1, end_idx + 1))
                 
-                # Prepare queries with context for this batch
-                queries_with_context = []
-                for i, (query, query_emb) in enumerate(zip(batch_queries, batch_query_embeddings)):
-                    relevant_chunks = self._find_top_chunks_optimized(
-                        query_emb, doc_embeddings, doc_chunks, top_k=3  # Reduced for batch processing
-                    )
-                    queries_with_context.append((batch_query_numbers[i], query, relevant_chunks))
+                if is_pdf:
+                    # Prepare queries with context for PDF processing
+                    batch_query_embeddings = query_embeddings[start_idx:end_idx]
+                    queries_with_context = []
+                    for i, (query, query_emb) in enumerate(zip(batch_queries, batch_query_embeddings)):
+                        relevant_chunks = self._find_top_chunks_optimized(
+                            query_emb, doc_embeddings, doc_chunks, top_k=3
+                        )
+                        queries_with_context.append((batch_query_numbers[i], query, relevant_chunks))
+                    
+                    # Create PDF batch task
+                    batch_task = asyncio.create_task(self._process_batch(
+                        queries_with_context, batch_query_numbers, batch_idx + 1
+                    ))
+                else:
+                    # Create URL batch task (direct URL processing)
+                    batch_task = asyncio.create_task(self._process_url_batch(
+                        batch_queries, batch_query_numbers, document_link, batch_idx + 1
+                    ))
                 
-                # Create batch task
-                batch_task = asyncio.create_task(self._process_batch(
-                    queries_with_context, batch_query_numbers, batch_idx + 1
-                ))
                 batch_tasks.append(batch_task)
             
             # Execute all batches in parallel
@@ -577,170 +690,36 @@ class LLMService:
             # Return error responses for this batch
             return {str(num): f"Batch processing error: {str(e)[:100]}" for num in query_numbers}
 
-    def _get_url_type(self, url: str) -> str:
-        """Determine the type of content at the URL."""
+    async def _process_url_batch(self, batch_queries: List[str], query_numbers: List[int], 
+                               document_url: str, batch_num: int) -> Dict[str, str]:
+        """Process a batch of queries with direct URL (non-PDF documents)."""
         try:
-            # Check common image extensions
-            image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.svg']
-            if any(url.lower().endswith(ext) for ext in image_extensions):
-                return 'image'
-                
-            # Check PDF extensions
-            if any(url.lower().endswith(ext) for ext in ['.pdf', '/pdf', '.pdf?', '/pdf?']):
-                return 'pdf'
-                
-            # Check content type if needed (requires HEAD request)
-            try:
-                response = requests.head(url, timeout=5, allow_redirects=True)
-                content_type = response.headers.get('content-type', '').lower()
-                
-                if 'image/' in content_type:
-                    return 'image'
-                elif 'application/pdf' in content_type:
-                    return 'pdf'
-                elif 'text/html' in content_type:
-                    return 'webpage'
-                else:
-                    return 'unknown'
-                    
-            except Exception as e:
-                logger.warning(f"Could not determine content type for {url}: {e}")
-                # If we can't determine the type, assume it's a webpage
-                return 'webpage'
-                
-        except Exception as e:
-            logger.error(f"Error determining URL type for {url}: {e}")
-            return 'unknown'
-
-    async def _process_direct_url_queries(self, queries: List[str], url: str) -> Dict[str, str]:
-        """Process queries by directly sending URL to Gemini without downloading content."""
-        try:
-            logger.info(f"Processing URL directly with Gemini: {url}")
+            logger.info(f"Processing URL batch {batch_num} with {len(batch_queries)} queries")
             
-            # Get an API key
+            # Get API key for this batch
             key_index = get_next_key_index(len(self.gemini_api_keys))
             api_key = self.gemini_api_keys[key_index]
             
-            # Get URL type
-            url_type = self._get_url_type(url)
+            # Create batch prompt for URL processing
+            batch_prompt = self._prepare_url_batch_query_prompt(batch_queries, query_numbers, document_url)
             
-            # Prepare the prompt based on URL type
-            prompt_parts = [
-                "You are a helpful assistant that answers questions based on the provided content.",
-                f"URL: {url} (Content Type: {url_type.capitalize()})\n\n"
-            ]
+            # Call LLM with batch prompt
+            response_text = await self._call_llm_batch(batch_prompt, api_key)
             
-            if url_type == 'image':
-                prompt_parts.extend([
-                    "This is an image URL. Please analyze the image and answer the questions about its content.",
-                    "If the image contains text, read and interpret it. If it's a photo, describe what you see."
-                ])
-            elif url_type == 'pdf':
-                prompt_parts.extend([
-                    "This is a PDF document. Please answer the questions based on its content.",
-                    "If you cannot find the answer in the document, respond with 'Information not found in the document.'"
-                ])
-            else:  # webpage or unknown
-                prompt_parts.extend([
-                    "This appears to be a webpage. Please answer the questions based on its content.",
-                    "If the information is not available on the page, respond with 'Information not available on this page.'"
-                ])
+            # Parse batch response
+            batch_responses = self._parse_batch_response(response_text, query_numbers)
             
-            prompt_parts.append("\nQUESTIONS:")
-            # Add questions to the prompt
-            for i, query in enumerate(queries, 1):
-                prompt_parts.append(f"{i}. {query}")
-            
-            prompt_parts.append("\nINSTRUCTIONS:")
-            prompt_parts.append("1. Provide clear, concise answers for each question in order.")
-            prompt_parts.append("2. Start each answer with the question number followed by a colon.")
-            prompt_parts.append("3. Keep each answer under 500 characters.")
-            prompt_parts.append("4. If you can't answer a question, explain why.")
-            
-            prompt = "\n".join(prompt_parts)
-            
-            # Log the prompt for debugging
-            logger.debug(f"Prompt for URL processing:\n{prompt}")
-            
-            # Call Gemini
-            response = await self._call_llm_batch(prompt, api_key)
-            
-            # Log the raw response for debugging
-            logger.debug(f"Raw response from Gemini:\n{response}")
-            
-            # Parse the response
-            answers = {}
-            for i, query in enumerate(queries, 1):
-                # Look for answer in format "1: answer text"
-                pattern = re.compile(fr'(?i){i}\s*[:.]\s*(.*?)(?=\s*{i+1}\s*[:.]|\Z)', re.DOTALL)
-                match = pattern.search(response)
-                if match:
-                    answer = match.group(1).strip()
-                    # Clean up the answer
-                    answer = re.sub(r'^[\s\d.:-]+', '', answer)  # Remove leading numbers and punctuation
-                    answers[str(i)] = answer
-                else:
-                    # If pattern not found, try to extract by position
-                    parts = [p.strip() for p in response.split('\n\n') if p.strip()]
-                    if i <= len(parts):
-                        answers[str(i)] = parts[i-1]
-                    else:
-                        answers[str(i)] = "Unable to extract answer from response"
-            
-            # If we got a response but couldn't parse it, return the full response
-            if all(v == "Unable to extract answer from response" for v in answers.values()) and response.strip():
-                answers = {str(i+1): response.strip() for i in range(len(queries))}
-            
-            return answers
+            logger.info(f"URL batch {batch_num} completed successfully")
+            return batch_responses
             
         except Exception as e:
-            logger.error(f"Error processing direct URL queries: {e}", exc_info=True)
-            return {str(i+1): f"Error processing URL: {str(e)[:100]}" for i in range(len(queries))}
+            logger.error(f"Error processing URL batch {batch_num}: {e}")
+            # Return error responses for this batch
+            return {str(num): f"URL batch processing error: {str(e)[:100]}" for num in query_numbers}
 
     async def process_queries(self, queries: List[str], document_link: str) -> Dict[str, str]:
-        """Main entry point - processes queries using appropriate method based on URL type."""
-        # Log the document URL and queries at the start
-        logger.info(f"\n{'='*100}")
-        logger.info(f"PROCESSING NEW REQUEST")
-        logger.info(f"{'='*100}")
-        logger.info(f"DOCUMENT_URL: {document_link}")
-        logger.info(f"QUERY_COUNT: {len(queries)}")
-        for i, query in enumerate(queries, 1):
-            logger.info(f"QUERY_{i}: {query}")
-        logger.info(f"{'='*100}\n")
-        
-        # Process the queries
-        start_time = time.time()
-        try:
-            # Check URL type and process accordingly
-            url_type = self._get_url_type(document_link)
-            logger.info(f"Detected URL type: {url_type}")
-            
-            if url_type == 'pdf':
-                logger.info("Processing as PDF...")
-                results = await self.process_queries_with_batch_processing(queries, document_link)
-            else:
-                logger.info(f"Processing as {url_type} URL directly with Gemini...")
-                results = await self._process_direct_url_queries(queries, document_link)
-            
-            # Log the responses
-            logger.info(f"\n{'='*100}")
-            logger.info("RESPONSES GENERATED")
-            logger.info(f"{'='*100}")
-            for i, (query, response) in enumerate(zip(queries, results.values()), 1):
-                logger.info(f"\nQUERY_{i}: {query}")
-                logger.info(f"RESPONSE_{i}: {response}")
-            
-            total_time = time.time() - start_time
-            logger.info(f"\nProcessing completed in {total_time:.2f} seconds")
-            logger.info(f"{'='*100}\n")
-            
-            return results
-            
-        except Exception as e:
-            logger.error(f"Error processing queries: {str(e)}", exc_info=True)
-            # Return error responses for all queries
-            return {str(i+1): f"Error: {str(e)[:100]}" for i in range(len(queries))}
+        """Main entry point - uses batch processing for optimal performance."""
+        return await self.process_queries_with_batch_processing(queries, document_link)
 
 # Singleton instance for the application
 llm_service = LLMService()
