@@ -696,7 +696,12 @@ class LLMService:
             return {str(num): f"Batch processing error: {str(e)[:100]}" for num in query_numbers}
 
     async def process_queries(self, queries: List[str], document_link: str) -> Dict[str, str]:
-        """Main entry point - uses batch processing for optimal performance."""
+        """
+        Main entry point for processing queries.
+        
+        For PDFs: Uses batch processing with chunking and embeddings.
+        For other URLs: Sends directly to Gemini with appropriate context.
+        """
         # Log the document URL and queries at the start
         logger.info(f"\n{'='*100}")
         logger.info(f"PROCESSING NEW REQUEST")
@@ -707,10 +712,20 @@ class LLMService:
             logger.info(f"QUERY_{i}: {query}")
         logger.info(f"{'='*100}\n")
         
-        # Process the queries
         start_time = time.time()
         try:
-            results = await self.process_queries_with_batch_processing(queries, document_link)
+            # Determine URL type
+            url_type = self._get_url_type(document_link)
+            logger.info(f"Detected URL type: {url_type}")
+            
+            if url_type == 'pdf':
+                # Use batch processing for PDFs
+                logger.info("Processing as PDF with chunking and embeddings...")
+                results = await self.process_queries_with_batch_processing(queries, document_link)
+            else:
+                # For non-PDF URLs, process directly
+                logger.info(f"Processing as {url_type} URL with direct Gemini call...")
+                results = await self._process_direct_url(queries, document_link, url_type)
             
             # Log the responses
             logger.info(f"\n{'='*100}")
@@ -728,7 +743,8 @@ class LLMService:
             
         except Exception as e:
             logger.error(f"Error processing queries: {str(e)}", exc_info=True)
-            raise
+            # Return error responses for all queries
+            return {str(i+1): f"Error processing request: {str(e)[:200]}" for i in range(len(queries))}
 
 # Singleton instance for the application
 llm_service = LLMService()
