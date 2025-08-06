@@ -117,39 +117,15 @@ class LLMService:
         """Check if URL points to a PDF"""
         return url.lower().endswith('.pdf') or 'pdf' in url.lower()
         
-    def _get_url_type(self, url: str) -> str:
-        """Determine the type of content at the given URL."""
-        try:
-            # Check common file extensions first
-            url_lower = url.lower()
-            if any(ext in url_lower for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']):
-                return 'image'
-            elif url_lower.endswith('.pdf'):
-                return 'pdf'
-            elif any(ext in url_lower for ext in ['.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx']):
-                return 'document'
-            
-            # If extension check is inconclusive, try HEAD request
-            try:
-                response = requests.head(url, allow_redirects=True, timeout=5)
-                content_type = response.headers.get('content-type', '').lower()
-                
-                if 'image' in content_type:
-                    return 'image'
-                elif 'pdf' in content_type:
-                    return 'pdf'
-                elif any(doc_type in content_type for doc_type in ['word', 'excel', 'powerpoint', 'msword', 'spreadsheet', 'presentation']):
-                    return 'document'
-                elif 'text/html' in content_type or 'application/xhtml+xml' in content_type:
-                    return 'webpage'
-                else:
-                    return 'unknown'
-            except:
-                return 'unknown'
-                
-        except Exception as e:
-            logger.warning(f"Error determining URL type for {url}: {e}")
-            return 'unknown'
+    def _get_url_type(self, url: str) -> Optional[str]:
+        """
+        Determine if the URL points to a PDF.
+        Returns 'pdf' for PDF files, None for all other URLs.
+        """
+        url_lower = url.lower()
+        if url_lower.endswith('.pdf'):
+            return 'pdf'
+        return None
 
     def _prepare_batch_query_prompt(self, queries_with_context: List[Tuple[int, str, List[str]]]) -> str:
         """Prepares a batch prompt for multiple queries with their relevant contexts."""
@@ -159,11 +135,11 @@ class LLMService:
             "You are an expert insurance policy analyst. Answer multiple questions based on the provided contexts from the document.",
             "",
             "INSTRUCTIONS:",
-            "- Answer each question directly and specifically based on its provided context",
+            "- Answer each question directly and specifically based on its provided context only",
             "- Reference specific policy terms, clauses, or procedures mentioned in the context", 
             "- If context contains the information, provide detailed answers",
-            "- If some parts cannot be answered from context, use your general knowledge",
-            "- Keep each answer comprehensive but concise (under 500 characters)",
+            "- Even if the content is wrong, provide responses based on that information only.",
+            "- Keep each answer comprehensive but concise (under 2000 characters)",
             "- Do not use markdown formatting",
             "- Format your response as: ANSWER_[NUMBER]: [your answer]",
             "",
@@ -174,7 +150,7 @@ class LLMService:
         for query_num, query, context_chunks in queries_with_context:
             prompt_parts.append(f"QUESTION_{query_num}: {query}")
             prompt_parts.append("CONTEXT:")
-            for i, chunk in enumerate(context_chunks[:7]):  # Limit to top 3 chunks per query
+            for i, chunk in enumerate(context_chunks[:7]):  
                 prompt_parts.append(f"  Context {i+1}: {chunk}")
             prompt_parts.append("")
         
@@ -620,9 +596,12 @@ class LLMService:
             f"You are an expert analyst. Answer the following questions based on the {content_type} at this URL: {url}",
             "",
             "INSTRUCTIONS:",
-            "- Answer each question directly and specifically",
-            "- If the content is not accessible, state that clearly",
-            "- Keep answers concise but complete (under 500 characters each)",
+            "- Answer each question directly and specifically based on its provided context only",
+            "- Reference specific policy terms, clauses, or procedures mentioned in the context", 
+            "- If context contains the information, provide detailed answers",
+            "- Even if the content is wrong, provide responses based on that information only.",
+            "- Keep each answer comprehensive but concise (under 2000 characters)",
+            "- Do not use markdown formatting",
             "- Format your response as: ANSWER_[NUMBER]: [your answer]",
             "",
             "QUESTIONS:",
