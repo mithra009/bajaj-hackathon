@@ -438,6 +438,69 @@ class LLMService:
         
         return "\n".join(prompt_parts)
 
+    async def _process_image_with_gemini(self, image_url: str, queries: List[str]) -> List[str]:
+        """Process image using Gemini's vision capabilities with detailed instructions for table reading."""
+        try:
+            # Prepare the detailed prompt with explicit instructions for reading tables
+            prompt_parts = [
+                "You are an expert at reading and interpreting tables from images. Your task is to carefully analyze the table in the image and answer the following questions based SOLELY on the visible data.",
+                "",
+                "CRITICAL INSTRUCTIONS:",
+                "1. Carefully examine the ENTIRE table, including all headers, rows, and columns.",
+                "2. For each question, provide the answer based ONLY on the data visible in the table.",
+                "3. If the table contains the information but you're uncertain about the exact value, make your best attempt to read it.",
+                "4. For numerical values, provide the exact numbers as they appear in the table.",
+                "5. If a question is about a specific sum insured amount, find the corresponding row in the table.",
+                "6. For questions about daily limits or coverage, look for the relevant column in the table.",
+                "7. Format your response as: ANSWER_[NUMBER]: [your answer] with each answer on a new line.",
+                "8. DO NOT say the table doesn't contain the information if you can see relevant data - make your best effort to answer.",
+                "",
+                "IMPORTANT: The table appears to have the following structure:",
+                "- First column: Sum Insured amounts (like 4 Lakhs, 8 Lakhs, etc.)",
+                "- Other columns: Different types of coverage/limits (like Room, Boarding, Nursing, ICU, etc.)",
+                "- Rows represent different sum insured amounts",
+                "- Cells contain the coverage/limit amounts",
+                "",
+                "QUESTIONS:"
+            ]
+            
+            # Add each question with a number
+            for i, query in enumerate(queries, 1):
+                prompt_parts.append(f"{i}. {query}")
+                
+            prompt_parts.extend([
+                "",
+                "Please provide your answers based on the table data. If you can see the information in the table, provide the exact values. If the information is not in the table, say 'The table does not contain this information.'"
+            ])
+            
+            # Generate response
+            genai.configure(api_key=self.gemini_api_keys[0])
+            model = genai.GenerativeModel(
+                self.model_name,
+                generation_config={
+                    "temperature": 0.1,
+                    "max_output_tokens": 4096,
+                    "top_p": 0.9,
+                    "top_k": 30
+                },
+                safety_settings={
+                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                }
+            )
+            
+            response = await model.generate_content_async([prompt_parts])
+            
+            # Parse response
+            query_numbers = list(range(1, len(queries) + 1))
+            return self._parse_batch_response(response.text, query_numbers)
+            
+        except Exception as e:
+            logger.error(f"Error processing image with Gemini: {e}")
+            raise Exception(f"Gemini image processing failed: {e}")
+
     def _prepare_text_analysis_prompt(self, queries: List[str], extracted_text: str, file_type: str) -> str:
         """Prepare prompt for text-based analysis."""
         prompt_parts = [
