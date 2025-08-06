@@ -136,13 +136,37 @@ async def query_document(
     
     try:
         # Process queries in parallel
-        results_dict = await llm_service.process_queries(
+        results = await llm_service.process_queries(
             queries=query_data.questions,
             document_link=str(query_data.documents)
         )
         
-        # Sort results by query index ("1", "2", ...) and extract answers
-        sorted_answers = [results_dict[str(i)] for i in sorted(results_dict.keys(), key=int)]
+        # Handle different response formats
+        if isinstance(results, dict):
+            if 'answers' in results and isinstance(results['answers'], list):
+                # New format: {"answers": ["answer1", "answer2", ...]}
+                sorted_answers = results['answers']
+            else:
+                # Old format: {"1": "answer1", "2": "answer2", ...}
+                try:
+                    sorted_answers = [results[str(i)] for i in range(1, len(query_data.questions) + 1)]
+                except (KeyError, ValueError):
+                    # Fallback to all values if keys aren't numeric
+                    sorted_answers = list(results.values())
+        elif isinstance(results, list):
+            # Direct list of answers
+            sorted_answers = results
+        else:
+            # Unexpected format, create error responses
+            sorted_answers = ["Error: Unexpected response format from LLM service"] * len(query_data.questions)
+        
+        # Ensure we have the right number of answers
+        if len(sorted_answers) < len(query_data.questions):
+            # Pad with empty answers if needed
+            sorted_answers.extend(["No answer provided"] * (len(query_data.questions) - len(sorted_answers)))
+        elif len(sorted_answers) > len(query_data.questions):
+            # Truncate if too many answers
+            sorted_answers = sorted_answers[:len(query_data.questions)]
         
         # Prepare the final response object
         response_data = QueryResponse(answers=sorted_answers)
