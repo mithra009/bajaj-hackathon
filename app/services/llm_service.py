@@ -640,15 +640,30 @@ class LLMService:
         
         return "\n".join(prompt_parts)
     
+    def _convert_google_drive_url(self, url: str) -> str:
+        """Convert Google Drive URL to direct download link."""
+        try:
+            # Handle Google Drive sharing links
+            if 'drive.google.com' in url and '/file/d/' in url:
+                file_id = url.split('/file/d/')[1].split('/')[0]
+                return f"https://drive.google.com/uc?export=download&id={file_id}"
+            return url
+        except Exception as e:
+            logger.warning(f"Error converting Google Drive URL: {e}")
+            return url
+    
     async def _process_direct_url(self, queries: List[str], url: str, url_type: str) -> Dict[str, str]:
         """Process queries by sending them directly to Gemini with the URL."""
         try:
+            # Handle Google Drive URLs
+            processed_url = self._convert_google_drive_url(url)
+            
             # Get API key
             key_index = get_next_key_index(len(self.gemini_api_keys))
             api_key = self.gemini_api_keys[key_index]
             
-            # Prepare the prompt
-            prompt = await self._prepare_direct_url_prompt(queries, url, url_type)
+            # Prepare the prompt with the processed URL
+            prompt = await self._prepare_direct_url_prompt(queries, processed_url, url_type)
             
             # Call Gemini API
             response_text = await self._call_llm_batch(prompt, api_key)
@@ -657,16 +672,32 @@ class LLMService:
             query_numbers = list(range(1, len(queries) + 1))
             parsed_answers = self._parse_batch_response(response_text, query_numbers)
             
+            # Check if we got a content not accessible message
+            if any('content not accessible' in str(v).lower() for v in parsed_answers.values()):
+                logger.warning(f"Content not accessible at URL: {url}")
+                if processed_url != url:
+                    logger.info("Trying with original URL...")
+                    return await self._process_direct_url(queries, url, url_type)
+            
             # Ensure all queries have answers
             results = {}
             for i, query in enumerate(queries, 1):
-                results[str(i)] = parsed_answers.get(str(i), f"Could not process answer for query {i}")
+                answer = parsed_answers.get(str(i), f"Could not process answer for query {i}")
+                # If content is not accessible, provide a more helpful message
+                if 'content not accessible' in str(answer).lower():
+                    answer = ("I couldn't access the content at the provided URL. "
+                             "Please ensure the file is publicly accessible and try again. "
+                             "For Google Drive links, make sure the sharing settings allow 'Anyone with the link' to view.")
+                results[str(i)] = answer
             
             return results
             
         except Exception as e:
             logger.error(f"Error processing direct URL: {e}")
-            return {str(i+1): f"Error processing {url_type} URL: {str(e)[:100]}" for i in range(len(queries))}
+            error_msg = (f"Error processing {url_type} URL. "
+                        "Please ensure the content is publicly accessible. "
+                        f"Details: {str(e)[:100]}")
+            return {str(i+1): error_msg for i in range(len(queries))}
     
     async def _process_batch(self, queries_with_context: List[Tuple[int, str, List[str]]], 
                            query_numbers: List[int], batch_num: int) -> Dict[str, str]:
