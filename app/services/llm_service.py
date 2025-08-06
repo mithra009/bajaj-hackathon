@@ -117,15 +117,39 @@ class LLMService:
         """Check if URL points to a PDF"""
         return url.lower().endswith('.pdf') or 'pdf' in url.lower()
         
-    def _get_url_type(self, url: str) -> Optional[str]:
-        """
-        Determine if the URL points to a PDF.
-        Returns 'pdf' for PDF files, None for all other URLs.
-        """
-        url_lower = url.lower()
-        if url_lower.endswith('.pdf'):
-            return 'pdf'
-        return None
+    def _get_url_type(self, url: str) -> str:
+        """Determine the type of content at the given URL."""
+        try:
+            # Check common file extensions first
+            url_lower = url.lower()
+            if any(ext in url_lower for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']):
+                return 'image'
+            elif url_lower.endswith('.pdf'):
+                return 'pdf'
+            elif any(ext in url_lower for ext in ['.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx']):
+                return 'document'
+            
+            # If extension check is inconclusive, try HEAD request
+            try:
+                response = requests.head(url, allow_redirects=True, timeout=5)
+                content_type = response.headers.get('content-type', '').lower()
+                
+                if 'image' in content_type:
+                    return 'image'
+                elif 'pdf' in content_type:
+                    return 'pdf'
+                elif any(doc_type in content_type for doc_type in ['word', 'excel', 'powerpoint', 'msword', 'spreadsheet', 'presentation']):
+                    return 'document'
+                elif 'text/html' in content_type or 'application/xhtml+xml' in content_type:
+                    return 'webpage'
+                else:
+                    return 'unknown'
+            except:
+                return 'unknown'
+                
+        except Exception as e:
+            logger.warning(f"Error determining URL type for {url}: {e}")
+            return 'unknown'
 
     def _prepare_batch_query_prompt(self, queries_with_context: List[Tuple[int, str, List[str]]]) -> str:
         """Prepares a batch prompt for multiple queries with their relevant contexts."""
@@ -135,11 +159,11 @@ class LLMService:
             "You are an expert insurance policy analyst. Answer multiple questions based on the provided contexts from the document.",
             "",
             "INSTRUCTIONS:",
-            "- Answer each question directly and specifically based on its provided context only,even if the content is wrong or false, you should provide answers based on that content only",
+            "- Answer each question directly and specifically based on its provided context",
             "- Reference specific policy terms, clauses, or procedures mentioned in the context", 
             "- If context contains the information, provide detailed answers",
-            "- Even if the content is wrong, provide responses based on that information only.",
-            "- Write a brief answer under 2000 characters",
+            "- If some parts cannot be answered from context, use your general knowledge",
+            "- Keep each answer comprehensive but concise (under 500 characters)",
             "- Do not use markdown formatting",
             "- Format your response as: ANSWER_[NUMBER]: [your answer]",
             "",
@@ -150,7 +174,7 @@ class LLMService:
         for query_num, query, context_chunks in queries_with_context:
             prompt_parts.append(f"QUESTION_{query_num}: {query}")
             prompt_parts.append("CONTEXT:")
-            for i, chunk in enumerate(context_chunks[:7]):  
+            for i, chunk in enumerate(context_chunks[:7]):  # Limit to top 3 chunks per query
                 prompt_parts.append(f"  Context {i+1}: {chunk}")
             prompt_parts.append("")
         
@@ -449,65 +473,22 @@ class LLMService:
             logger.error(f"Batch API call failed with key ...{api_key[-4:]}: {e}")
             raise Exception(f"Gemini batch API call failed: {str(e)[:100]}")
 
-    def _get_content_length(self, url: str) -> int:
-        """Get the content length of a URL in bytes."""
-        try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            response = requests.head(url, headers=headers, timeout=10, allow_redirects=True)
-            response.raise_for_status()
-            
-            content_length = int(response.headers.get('content-length', 0))
-            logger.info(f"Content length for {url}: {content_length} bytes")
-            return content_length
-            
-        except Exception as e:
-            logger.warning(f"Could not determine content length for {url}: {e}")
-            return 0
-            
-    def _download_document(self, url: str) -> bytes:
-        """Download document with better error handling and size check."""
-        try:
-            # First check content length
-            content_length = self._get_content_length(url)
-            MAX_SIZE = 100 * 1024 * 1024  # 100MB
-            
-            if content_length > MAX_SIZE:
-                logger.warning(f"Document size ({content_length} bytes) exceeds maximum allowed size ({MAX_SIZE} bytes)")
-                raise APIError("Document is too large to download. Maximum size is 100MB.")
-                
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': '*/*'
-            }
-            
-            response = requests.get(url, headers=headers, timeout=30, stream=True)
-            response.raise_for_status()
-            
-            # Verify size again in case content-length was not available or incorrect
-            content = response.content
-            if len(content) > MAX_SIZE:
-                logger.warning(f"Downloaded document size ({len(content)} bytes) exceeds maximum allowed size")
-                raise APIError("Downloaded document is too large. Maximum size is 100MB.")
-                
-            return content
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error downloading document: {e}")
-            raise APIError(f"Failed to download document: {e}")
-            
     def _download_pdf_optimized(self, url: str) -> bytes:
         """Optimized PDF download with better error handling."""
         try:
-            content = self._download_document(url)
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'application/pdf,*/*'
+            }
             
-            # Additional PDF-specific validation
-            content_type = requests.head(url, timeout=5).headers.get('content-type', '').lower()
+            response = requests.get(url, timeout=15, headers=headers, stream=True)
+            response.raise_for_status()
+            
+            content_type = response.headers.get('content-type', '').lower()
             if 'pdf' not in content_type and not url.lower().endswith('.pdf'):
-                logger.warning(f"Unexpected content type for PDF: {content_type}")
-                
-            return content
+                logger.warning(f"Unexpected content type: {content_type}")
+            
+            return response.content
             
         except Exception as e:
             logger.error(f"Error downloading PDF: {e}")
@@ -639,12 +620,9 @@ class LLMService:
             f"You are an expert analyst. Answer the following questions based on the {content_type} at this URL: {url}",
             "",
             "INSTRUCTIONS:",
-            "- Answer each question directly and specifically based on its provided context in the url only",
-            "- Reference specific policy terms, clauses, or procedures mentioned in the context", 
-            "- If context contains the information, provide detailed answers",
-            "- Even if the content is wrong, provide responses based on that information only.",
-            "- Keep each answer under 2000 characters",
-            "- Do not use markdown formatting",
+            "- Answer each question directly and specifically",
+            "- If the content is not accessible, state that clearly",
+            "- Keep answers concise but complete (under 500 characters each)",
             "- Format your response as: ANSWER_[NUMBER]: [your answer]",
             "",
             "QUESTIONS:",
@@ -752,8 +730,8 @@ class LLMService:
         """
         Main entry point for processing queries.
         
-        For PDFs under 100MB: Uses batch processing with chunking and embeddings.
-        For other URLs or large files: Sends directly to Gemini with appropriate context.
+        For PDFs: Uses batch processing with chunking and embeddings.
+        For other URLs: Sends directly to Gemini with appropriate context.
         """
         # Log the document URL and queries at the start
         logger.info(f"\n{'='*100}")
@@ -772,27 +750,13 @@ class LLMService:
             logger.info(f"Detected URL type: {url_type}")
             
             if url_type == 'pdf':
-                try:
-                    # Check content length first
-                    content_length = self._get_content_length(document_link)
-                    MAX_SIZE = 100 * 1024 * 1024  # 100MB
-                    
-                    if 0 < content_length <= MAX_SIZE:
-                        # Process as PDF with chunking for files under 100MB
-                        logger.info(f"Processing as PDF with chunking and embeddings ({content_length} bytes)")
-                        results = await self.process_queries_with_batch_processing(queries, document_link)
-                    else:
-                        # For large or unknown size PDFs, process directly
-                        logger.info(f"Processing large PDF ({content_length} bytes) with direct Gemini call...")
-                        results = await self._process_direct_url(queries, document_link, 'pdf')
-                        
-                except Exception as e:
-                    logger.warning(f"Error in PDF processing, falling back to direct URL: {e}")
-                    results = await self._process_direct_url(queries, document_link, 'pdf')
+                # Use batch processing for PDFs
+                logger.info("Processing as PDF with chunking and embeddings...")
+                results = await self.process_queries_with_batch_processing(queries, document_link)
             else:
                 # For non-PDF URLs, process directly
-                logger.info(f"Processing as {url_type or 'unknown'} URL with direct Gemini call...")
-                results = await self._process_direct_url(queries, document_link, url_type or 'document')
+                logger.info(f"Processing as {url_type} URL with direct Gemini call...")
+                results = await self._process_direct_url(queries, document_link, url_type)
             
             # Log the responses
             logger.info(f"\n{'='*100}")
