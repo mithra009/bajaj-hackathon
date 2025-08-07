@@ -582,17 +582,17 @@ class LLMService:
     def _prepare_file_analysis_prompt(self, queries: List[str]) -> str:
         """Prepare prompt for file analysis with Gemini upload."""
         prompt_parts = [
-            "You are an expert document analyzer. Analyze the uploaded file and answer the following questions based on its content or from your general knowledge if the information is not found.",
+            "You are an expert document analyzer. Your task is to answer questions based on the uploaded file or from your general knowledge if the information is not found.",
             "",
             "CRITICAL INSTRUCTIONS:",
-            "- For each question, first try to find the answer in the uploaded file.",
-            "- If the exact information is found in the file, provide it exactly as written, even if it's incorrect.",
-            "- If the information is not found in the file, provide a correct and concise answer from your general knowledge.",
-            "- DO NOT mention that the information is not in the file - just provide the answer directly.",
-            "- Keep each answer under 200 characters in a paragraph.",
-            "- Do not use markdown formatting.",
-            "- DO NOT include context numbers or references like 'Context 1' in your responses.",
-            "- Format your response as: ANSWER_[NUMBER]: [your answer]",
+            "1. For each question, first try to find the answer in the uploaded file.",
+            "2. If the exact information is found in the file, provide it exactly as written, even if it's incorrect.",
+            "3. If the information is not found in the file, provide a correct and concise answer from your general knowledge.",
+            "4. NEVER say that the information is not in the file - always provide an answer.",
+            "5. Do not mention whether the answer came from the file or your knowledge - just provide the answer.",
+            "6. Keep each answer under 200 characters in a paragraph.",
+            "7. Do not use markdown formatting or special formatting.",
+            "8. Format your response as: ANSWER_[NUMBER]: [your answer]",
             "",
             "QUESTIONS:",
             ""
@@ -603,10 +603,10 @@ class LLMService:
         
         prompt_parts.extend([
             "",
-            "For each question:",
-            "1. If the answer is in the file, provide it exactly as written.",
-            "2. If not in the file, provide a correct answer from your knowledge.",
-            "3. Never say the information is not in the file.",
+            "IMPORTANT: For each question, provide a direct answer without indicating the source.",
+            "- If the answer is in the file, provide it exactly as written.",
+            "- If not in the file, provide a correct answer from your knowledge.",
+            "- Never say the information is not available or not in the file.",
             "",
             "Format: ANSWER_[NUMBER]: [answer]"
         ])
@@ -680,16 +680,17 @@ class LLMService:
     def _prepare_text_analysis_prompt(self, queries: List[str], extracted_text: str, file_type: str) -> str:
         """Prepare prompt for text-based analysis."""
         prompt_parts = [
-            f"You are an expert {file_type.upper()} analyzer. Answer questions based on the provided {file_type} content or from your general knowledge if the information is not found.",
+            f"You are an expert {file_type.upper()} analyzer. Answer the following questions based on the provided document content or from your general knowledge.",
             "",
             "CRITICAL INSTRUCTIONS:",
-            "- For each question, first try to find the answer in the provided document content.",
-            "- If the exact information is found in the document, provide it exactly as written, even if it's incorrect.",
-            "- If the information is not found in the document, provide a correct and concise answer from your general knowledge.",
-            "- DO NOT mention that the information is not in the document - just provide the answer directly.",
-            "- Keep each answer under 200 characters in a paragraph.",
-            "- Do not use markdown formatting.",
-            "- Format your response as: ANSWER_[NUMBER]: [your answer]",
+            "1. For each question, first try to find the answer in the provided document content.",
+            "2. If the exact information is found in the document, provide it exactly as written, even if it's incorrect.",
+            "3. If the information is not found in the document, provide a correct and concise answer from your general knowledge.",
+            "4. NEVER say that the information is not in the document - always provide an answer.",
+            "5. Do not mention whether the answer came from the document or your knowledge - just provide the answer.",
+            "6. Keep each answer under 200 characters in a paragraph.",
+            "7. Do not use markdown formatting or special formatting.",
+            "8. Format your response as: ANSWER_[NUMBER]: [your answer]",
             "",
             f"DOCUMENT CONTENT:",
             "=" * 50,
@@ -705,10 +706,10 @@ class LLMService:
         
         prompt_parts.extend([
             "",
-            "For each question:",
-            "1. If the answer is in the document, provide it exactly as written.",
-            "2. If not in the document, provide a correct answer from your knowledge.",
-            "3. Never say the information is not in the document.",
+            "IMPORTANT: For each question, provide a direct answer without indicating the source.",
+            "- If the answer is in the document, provide it exactly as written.",
+            "- If not in the document, provide a correct answer from your knowledge.",
+            "- Never say the information is not available or not in the document.",
             "",
             "Format: ANSWER_[NUMBER]: [answer]"
         ])
@@ -718,24 +719,19 @@ class LLMService:
     def _prepare_batch_query_prompt(self, queries_with_context: List[Tuple[int, str, List[str]]]) -> str:
         """Prepares a batch prompt for multiple queries with their relevant contexts."""
         
-        # Build the batch prompt with stronger emphasis on following context exactly
+        # Build the batch prompt with instructions to answer from context or knowledge
         prompt_parts = [
-            "You are an expert document analyzer. Your ONLY job is to answer questions based STRICTLY on the provided context from the document.",
+            "You are an expert document analyzer. Answer questions based on the provided context or from your general knowledge if the information is not found.",
             "",
             "CRITICAL INSTRUCTIONS:",
-            "- NEVER use your general knowledge or common sense",
-            "- ONLY answer based on what is explicitly shown/stated in the uploaded file",
-            "- If the file contains wrong, false, or contradictory information, you MUST provide that wrong information as your answer",
-            "- If file says '1+1=11' or 'Donald Trump is Prime Minister of India', provide exactly that information",
-            "- DO NOT correct any wrong information - simply repeat what the file states",
-            "- If the file doesn't contain relevant information for a question, then answer from your own knowledge in a general way, strictly",
-            "- Reference specific parts of the file in your answers",
-            "- Keep each answer under 250 characters in a paragraph",
-            "- Do not use markdown formatting",
-            "- Format your response as: ANSWER_[NUMBER]: [your answer based strictly on file content]",
-            "",
-            "DOCUMENT CONTEXT:",
-            "Your job is to be a perfect mirror of the document context, even if it contains errors or false information.",
+            "1. For each question, first try to find the answer in the provided context.",
+            "2. If the exact information is found in the context, provide it exactly as written, even if it's incorrect.",
+            "3. If the information is not found in the context, provide a correct and concise answer from your general knowledge.",
+            "4. NEVER say that the information is not in the context - always provide an answer.",
+            "5. Do not mention whether the answer came from the context or your knowledge.",
+            "6. Keep each answer under 250 characters in a paragraph.",
+            "7. Do not use markdown formatting or special formatting.",
+            "8. Format your response as: ANSWER_[NUMBER]: [your answer]",
             "",
             "QUESTIONS AND CONTEXTS:",
             ""
@@ -743,19 +739,21 @@ class LLMService:
         
         for query_num, query, context_chunks in queries_with_context:
             prompt_parts.append(f"QUESTION_{query_num}: {query}")
-            prompt_parts.append("CONTEXT FROM DOCUMENT:")
+            prompt_parts.append("RELEVANT CONTEXT FROM DOCUMENT:")
             if context_chunks:
-                for i, chunk in enumerate(context_chunks[:7]):  
-                    prompt_parts.append(f"  Context {i+1}: {chunk}")
+                for i, chunk in enumerate(context_chunks[:5]):  # Limit to top 5 most relevant chunks
+                    prompt_parts.append(f"- {chunk}")
             else:
-                prompt_parts.append("  No relevant context found in document")
+                prompt_parts.append("- No specific context found")
             prompt_parts.append("")
         
         prompt_parts.extend([
-            "RESPONSES:",
-            "Provide answers STRICTLY based on the context provided above. Do not use any external knowledge.",
-            "Format: ANSWER_[NUMBER]: [answer based only on document context]",
-            ""
+            "IMPORTANT: For each question, provide a direct answer without indicating the source.",
+            "- If the answer is in the context, provide it exactly as written.",
+            "- If not in the context, provide a correct answer from your knowledge.",
+            "- Never say the information is not available or not in the document.",
+            "",
+            "Format: ANSWER_[NUMBER]: [answer]"
         ])
         
         return "\n".join(prompt_parts)
