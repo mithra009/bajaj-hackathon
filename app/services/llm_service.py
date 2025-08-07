@@ -1063,73 +1063,95 @@ class LLMService:
             return chunks[:top_k] if chunks else []
 
     def extract_chunks_optimized(self, pdf_bytes: bytes, max_chars: int = 1200) -> List[str]:
-        """
-        Optimized text extraction with recursive text splitting for better semantic chunking.
-        
-        Args:
-            pdf_bytes: Bytes of the PDF file
-            max_chars: Maximum characters per chunk (default: 1200)
-            
-        Returns:
-            List of text chunks with preserved semantic structure
-        """
+        """Optimized text extraction with aggressive chunking for large documents."""
         try:
-            # Initialize the recursive text splitter
-            text_splitter = TextSplitter(
-                chunk_size=max_chars,
-                chunk_overlap=int(max_chars * 0.1),  # 10% overlap
-                separators=["\n\n\n", "\n\n", ". ", "? ", "! ", " ", ""]
-            )
-            
             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
             chunks = []
             
             total_pages = len(doc)
             if total_pages > 100:
-                # Adjust chunk size for very large documents
-                text_splitter.chunk_size = 1500
-                text_splitter.chunk_overlap = 150  # 10% of 1500
+                max_chars = 1500
                 logger.info(f"Large document detected ({total_pages} pages), using larger chunks")
             
-            # Extract and clean text from each page
             for page_num, page in enumerate(doc):
-                try:
-                    # Get text with layout preservation
-                    text = page.get_text("text").strip()
-                    if not text:
-                        continue
-                    
-                    # Clean up the text
-                    text = re.sub(r'\s+', ' ', text)  # Normalize whitespace
-                    text = re.sub(r'[^\w\s\\.\\,\\;\\:\\!\\?\\(\\)\\-\\%\\$\\n]', ' ', text)
-                    
-                    # Split the text into chunks using the recursive splitter
-                    page_chunks = text_splitter.split_text(text)
-                    
-                    # Add page number to each chunk for reference
-                    for chunk in page_chunks:
-                        if len(chunk) > 50:  # Only add chunks with meaningful content
-                            chunks.append(f"[Page {page_num + 1}] {chunk}")
-                    
-                    # Safety check to prevent memory issues with very large documents
-                    if len(chunks) > 1000:
-                        logger.warning(f"Reached chunk limit at page {page_num + 1}")
-                        break
-                        
-                except Exception as e:
-                    logger.warning(f"Error processing page {page_num + 1}: {e}")
+                text = page.get_text("text").strip()
+                if not text:
                     continue
+                
+                text = re.sub(r'\s+', ' ', text)
+                text = re.sub(r'[^\w\s\.\,\;\:\!\?\(\)\-\%\$]', ' ', text)
+                
+                if total_pages > 50:
+                    paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+                    
+                    current_chunk = ""
+                    for para in paragraphs:
+                        if len(current_chunk) + len(para) + 2 > max_chars:
+                            if current_chunk:
+                                chunks.append(current_chunk.strip())
+                                current_chunk = para
+                            else:
+                                sentences = re.split(r'[.!?]+', para)
+                                temp_chunk = ""
+                                for sentence in sentences:
+                                    sentence = sentence.strip()
+                                    if not sentence:
+                                        continue
+                                    if len(temp_chunk) + len(sentence) + 2 > max_chars:
+                                        if temp_chunk:
+                                            chunks.append(temp_chunk.strip())
+                                            temp_chunk = sentence
+                                    else:
+                                        temp_chunk += ". " + sentence if temp_chunk else sentence
+                                if temp_chunk:
+                                    current_chunk = temp_chunk
+                        else:
+                            current_chunk += "\n\n" + para if current_chunk else para
+                    
+                    if current_chunk:
+                        chunks.append(current_chunk.strip())
+                else:
+                    sentences = re.split(r'[.!?]+', text)
+                    
+                    current_chunk = ""
+                    for sentence in sentences:
+                        sentence = sentence.strip()
+                        if not sentence:
+                            continue
+                            
+                        if len(current_chunk) + len(sentence) + 2 > max_chars:
+                            if current_chunk:
+                                chunks.append(current_chunk.strip())
+                                current_chunk = sentence
+                            else:
+                                words = sentence.split()
+                                temp_chunk = ""
+                                for word in words:
+                                    if len(temp_chunk) + len(word) + 1 > max_chars:
+                                        if temp_chunk:
+                                            chunks.append(temp_chunk.strip())
+                                            temp_chunk = word
+                                        else:
+                                            chunks.append(word)
+                                    else:
+                                        temp_chunk += " " + word if temp_chunk else word
+                                if temp_chunk:
+                                    current_chunk = temp_chunk
+                        else:
+                            current_chunk += ". " + sentence if current_chunk else sentence
+                    
+                    if current_chunk:
+                        chunks.append(current_chunk.strip())
+                    
+                if len(chunks) > 1000:
+                    logger.warning(f"Reached chunk limit at page {page_num + 1}")
+                    break
             
-            # Post-process chunks
             min_chunk_size = 100 if total_pages > 100 else 50
-            final_chunks = [chunk for chunk in chunks if len(chunk) > min_chunk_size]
+            chunks = [chunk for chunk in chunks if len(chunk) > min_chunk_size]
             
-            # Log statistics
-            avg_chunk_size = sum(len(chunk) for chunk in final_chunks) / len(final_chunks) if final_chunks else 0
-            logger.info(f"Extracted {len(final_chunks)} chunks from {total_pages} pages "
-                       f"(avg. {avg_chunk_size:.0f} chars per chunk)")
-            
-            return final_chunks
+            logger.info(f"Extracted {len(chunks)} optimized chunks from {total_pages}-page document")
+            return chunks
             
         except Exception as e:
             logger.error(f"Error extracting text from PDF: {e}")
