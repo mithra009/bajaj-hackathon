@@ -582,33 +582,61 @@ class LLMService:
     def _prepare_file_analysis_prompt(self, queries: List[str]) -> str:
         """Prepare prompt for file analysis with Gemini upload."""
         prompt_parts = [
-            "You are an expert health insurance policy analyzer. Provide clear, concise answers to questions about the policy document.",
+            "You are an expert health insurance policy analyst. Your task is to carefully analyze the provided policy document and answer the following questions.",
             "",
-            "EXAMPLE QUERY AND ANSWER:",
-            "Query: 'I have raised a claim for hospitalization for Rs 200,000 with HDFC, and it's approved. My total expenses are Rs 250,000. Can I raise the remaining Rs 50,000 with you?'",
-            "Answer: 'Yes, under Arogya Sanjeevani Policy under Clause 10.8'",
+            "DOCUMENT TYPE: This is a health insurance policy document that may be in PowerPoint format. Pay special attention to:",
+            "- All slides and their content (titles, bullet points, tables, charts)",
+            "- Speaker notes and slide notes (often contain important details)",
+            "- Fine print, footnotes, and disclaimers",
+            "- Any appendices, reference slides, or additional materials",
+            "- Policy numbers, coverage details, terms and conditions",
             "",
-            "CRITICAL INSTRUCTIONS:",
-            "1. First try to find the answer in the uploaded file, citing relevant sections.",
-            "2. If not found, provide a concise answer from your knowledge, mentioning it's based on standard policy terms.",
-            "3. NEVER say information is not available - always provide a helpful response.",
-            "4. Keep answers around 250 characters, focusing on key details and section references.",
-            "5. Format: ANSWER_[NUMBER]: [concise answer with section references]",
+            "INSTRUCTIONS:",
+            "1. Read and analyze the ENTIRE document carefully before answering any questions.",
+            "2. For each question, provide a comprehensive response (200-300 characters) with specific references.",
+            "3. Include slide numbers, section headers, or specific locations where the information was found.",
+            "4. For numerical values (limits, sub-limits, waiting periods), provide exact figures from the document.",
+            "5. If a question has multiple parts, address each part clearly in your response.",
+            "6. For coverage details, be specific about what is included and any exclusions.",
+            "7. If you're unsure about an answer, provide the most relevant information you can find.",
             "",
-            "QUESTIONS:",
-            ""
+            "EXAMPLE QUERIES AND ANSWERS:",
+            "Question: What types of hospitalization expenses are covered, and what are the limits for room and room expenses?",
+            "Answer: Covers medical expenses including room rent up to ₹5,000/day and ICU charges up to ₹10,000/day. (Slide 5)",
+            "",
+            "Question: What is domiciliary hospitalization, and what are its key exclusions?",
+            "Answer: Domiciliary hospitalization is home treatment due to unavailability of hospital beds or patient condition, excluding treatments like asthma, bronchitis, epilepsy, etc. (Slide 7)",
+            "",
+            "Question: What are the benefits and limits of telemedicine and maternity coverage under this policy?",
+            "Answer: Telemedicine is covered up to ₹2,000 per policy year; maternity coverage is not included. (Slide 9)",
+            "",
+            "Question: What specialized treatments are covered, and what are their sub-limits?",
+            "Answer: Covers specialized treatments like robotic surgeries and stem cell therapy with sub-limits (e.g., ₹1,00,000 for deep brain stimulation). (Slide 11)",
+            "",
+            "Question: What are the waiting periods for pre-existing diseases and specified diseases or procedures?",
+            "Answer: 48 months for pre-existing diseases and 24 months for specified conditions like cataract, hernia, etc. (Slide 13)"
+            "",
+            "QUESTIONS:"
         ]
         
         for i, query in enumerate(queries, 1):
             prompt_parts.append(f"{i}. {query}")
-        
+            
         prompt_parts.extend([
             "",
             "RESPONSE FORMAT:",
-            "- Be specific and reference policy sections when possible (e.g., 'As per Section 4.2, this is covered...')",
-            "- For claim-related queries, mention relevant clauses (e.g., 'Under Clause 10.8, you can claim...')",
-            "- Keep responses concise but informative (around 250 characters)",
-            "- If exact section isn't found, provide the most relevant information available"
+            "For each question, provide your answer in the format: ANSWER_[NUMBER]: [your answer]",
+            "- Be specific and reference slide numbers or sections (e.g., 'As per Slide 15, this is covered...')",
+            "- For coverage details, mention any sub-limits or conditions",
+            "- If information is spread across multiple slides, consolidate it into a comprehensive answer",
+            "- If the exact information isn't available, provide the most relevant details you can find",
+            "",
+            "EXAMPLE RESPONSES:",
+            "GOOD: 'ANSWER_1: The policy covers hospitalization expenses up to ₹5,00,000 per year (Slide 8). Room rent is limited to 1% of sum insured per day (Slide 9). Pre-existing diseases have a 3-year waiting period (Slide 14).' ",
+            "",
+            "NOT ACCEPTABLE: 'ANSWER_1: The document doesn't specify coverage details. Please refer to the full policy document.'",
+            "",
+            "Now analyze the document thoroughly and provide your responses:"
         ])
         
         return "\n".join(prompt_parts)
@@ -855,8 +883,6 @@ class LLMService:
     async def _process_non_pdf_file(self, queries: List[str], url: str) -> Dict[str, str]:
         """Process non-PDF files (images, Excel, Word, PowerPoint, etc.)."""
         try:
-            # Download file
-            file_bytes = await asyncio.to_thread(self._download_file, url)
             file_type = self._get_file_type(url)
             
             # Get API key
@@ -865,8 +891,53 @@ class LLMService:
             
             logger.info(f"Processing {file_type} file: {url}")
             
+            # For PPTX files, send URL directly to Gemini
+            if file_type == 'powerpoint':
+                try:
+                    # Configure Gemini
+                    genai.configure(api_key=api_key)
+                    model = genai.GenerativeModel(
+                        self.model_name,
+                        generation_config={
+                            "temperature": 0.1,
+                            "max_output_tokens": 4096,
+                            "top_p": 0.9,
+                            "top_k": 30
+                        },
+                        safety_settings={
+                            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                        }
+                    )
+                    
+                    # Prepare prompt with URL
+                    prompt = self._prepare_file_analysis_prompt(queries)
+                    message = f"Please analyze the presentation at this URL and answer the following questions.\nURL: {url}\n\n{prompt}"
+                    
+                    # Generate response
+                    response = await model.generate_content_async(message)
+                    
+                    # Parse response
+                    query_numbers = list(range(1, len(queries) + 1))
+                    return self._parse_batch_response(response.text, query_numbers)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing PPTX with direct URL: {e}", exc_info=True)
+                    # Fall back to local extraction if direct URL fails
+                    logger.info("Falling back to local PPTX extraction...")
+                    file_bytes = await asyncio.to_thread(self._download_file, url)
+                    extracted_text = self._extract_text_from_powerpoint(file_bytes)
+                    if extracted_text.strip():
+                        prompt = self._prepare_text_analysis_prompt(queries, extracted_text, file_type)
+                        response = await self._call_llm_batch(prompt, api_key)
+                        return self._parse_batch_response(response, list(range(1, len(queries) + 1)))
+                    raise
+            
             # For images, use Gemini's vision capabilities
-            if file_type == 'image':
+            elif file_type == 'image':
+                file_bytes = await asyncio.to_thread(self._download_file, url)
                 try:
                     # Convert downloaded bytes into a PIL image object
                     image = Image.open(io.BytesIO(file_bytes))
@@ -922,18 +993,16 @@ class LLMService:
                     logger.error(f"Error processing image with Gemini Vision: {e}", exc_info=True)
                     return {str(i+1): f"Error processing image: {str(e)[:200]}" for i in range(len(queries))}
             
-            # For PDFs and PowerPoint, try local extraction first, then fallback to Gemini upload
-            if file_type in ['pdf', 'powerpoint']:
+            # For PDFs, try local extraction first, then fallback to Gemini upload
+            elif file_type == 'pdf':
                 try:
+                    file_bytes = await asyncio.to_thread(self._download_file, url)
                     # First try local text extraction
-                    if file_type == 'powerpoint':
-                        extracted_text = self._extract_text_from_powerpoint(file_bytes)
-                    else:  # PDF
-                        doc = fitz.open(stream=file_bytes, filetype="pdf")
-                        extracted_text = ""
-                        for page in doc:
-                            extracted_text += page.get_text() + "\n"
-                        doc.close()
+                    doc = fitz.open(stream=file_bytes, filetype="pdf")
+                    extracted_text = ""
+                    for page in doc:
+                        extracted_text += page.get_text() + "\n"
+                    doc.close()
                     
                     if extracted_text.strip():
                         prompt = self._prepare_text_analysis_prompt(queries, extracted_text, file_type)
@@ -941,10 +1010,10 @@ class LLMService:
                         return self._parse_batch_response(response, list(range(1, len(queries) + 1)))
                     
                     # If no text was extracted, fall through to Gemini upload
-                    logger.info(f"No text extracted from {file_type}, trying Gemini upload...")
+                    logger.info("No text extracted from PDF, trying Gemini upload...")
                     
                 except Exception as e:
-                    logger.warning(f"Local {file_type} processing failed, trying Gemini upload: {e}")
+                    logger.warning(f"Local PDF processing failed, trying Gemini upload: {e}")
                 
                 # Try Gemini upload as fallback
                 try:
