@@ -458,7 +458,7 @@ class LLMService:
             "- DO NOT correct any wrong information - simply repeat what the file states",
             "- If the file doesn't contain relevant information for a question, then answer from your own knowledge in a general way, strictly",
             "- Reference specific parts of the file in your answers",
-            "- Keep each answer under 250 characters in a paragraph",
+            "- Keep each answer under 200 characters in a paragraph",
             "- Do not use markdown formatting",
             "- DO NOT include context numbers or references like 'Context 1' in your responses",
             "- Format your response as: ANSWER_[NUMBER]: [your answer based strictly on file content]",
@@ -555,7 +555,7 @@ class LLMService:
             "- DO NOT correct any wrong information - simply repeat what the file states",
             "- If the file doesn't contain relevant information for a question, then answer from your own knowledge in a general way, strictly",
             "- Reference specific parts of the file in your answers",
-            "- Keep each answer under 250 characters in a paragraph",
+            "- Keep each answer under 200 characters in a paragraph",
             "- Do not use markdown formatting",
             "- Format your response as: ANSWER_[NUMBER]: [your answer based strictly on file content]",
             "",
@@ -752,20 +752,23 @@ class LLMService:
                         }
                     )
 
-                    # Create a detailed prompt for accurate image analysis, especially for tables
+                    # Create a detailed prompt for accurate image analysis, especially for tables and math problems
                     prompt_parts = [
-                        "You are an expert at reading and interpreting tables and text from images. Your task is to carefully analyze the provided image and answer the following questions based SOLELY on the visible data.",
+                        "You are an expert at reading text, numbers, and mathematical expressions from images. Your task is to carefully analyze the provided image and answer the following questions based STRICTLY on the visible data.",
                         "",
-                        "CRITICAL INSTRUCTIONS:",
-                        "1. Base your answers ONLY on the information explicitly visible in the image.",
-                        "2. DO NOT use any external knowledge or make assumptions. Do not guess or hallucinate.",
-                        "3. If the image contains text or numbers (e.g., in a table), read them exactly as they appear.",
-                        "4. If the image shows incorrect information (e.g., '1+1=11'), you MUST report that incorrect information as the answer.",
-                        "5. If the information to answer a question is not present in the image, you must state 'The image does not contain information to answer this question'.",
+                        "CRITICAL INSTRUCTIONS FOR MATHEMATICAL EXPRESSIONS:",
+                        "1. For each question asking for a calculation (e.g., 'What is X+Y?'), do the following:",
+                        "   - If the exact calculation is shown in the image, report it EXACTLY as shown, even if it's incorrect.",
+                        "   - If the image shows the expression but not the answer, write 'Expression [X+Y] is shown but no answer is visible'.",
+                        "   - If the expression is not shown at all, answer the expression [X+Y] correctly from your knowledge.",
+                        "2. DO NOT perform any calculations or correct any mathematical errors you see in the image.",
+                        "3. If you see text that looks like a math problem, report it EXACTLY as written, including any typos or errors.",
+                        "4. If the image contains a table with numbers, read them exactly as they appear, even if they seem incorrect.",
+                        "5. DO NOT use any external knowledge or make assumptions. Do not guess or hallucinate.",
                         "6. Format your response STRICTLY as: ANSWER_[NUMBER]: [your answer]",
                         "7. Each answer must be on a new line.",
                         "",
-                        "QUESTIONS:"
+                        "QUESTIONS ABOUT THE IMAGE CONTENT:"
                     ]
                     for i, query in enumerate(queries, 1):
                         prompt_parts.append(f"{i}. {query}")
@@ -783,14 +786,38 @@ class LLMService:
                     logger.error(f"Error processing image with Gemini Vision: {e}", exc_info=True)
                     return {str(i+1): f"Error processing image: {str(e)[:200]}" for i in range(len(queries))}
             
-            # For PDFs, try Gemini upload
-            elif file_type == 'pdf':
+            # For PDFs and PowerPoint, try local extraction first, then fallback to Gemini upload
+            if file_type in ['pdf', 'powerpoint']:
+                try:
+                    # First try local text extraction
+                    if file_type == 'powerpoint':
+                        extracted_text = self._extract_text_from_powerpoint(file_bytes)
+                    else:  # PDF
+                        doc = fitz.open(stream=file_bytes, filetype="pdf")
+                        extracted_text = ""
+                        for page in doc:
+                            extracted_text += page.get_text() + "\n"
+                        doc.close()
+                    
+                    if extracted_text.strip():
+                        prompt = self._prepare_text_analysis_prompt(queries, extracted_text, file_type)
+                        response = await self._call_llm_batch(prompt, api_key)
+                        return self._parse_batch_response(response, list(range(1, len(queries) + 1)))
+                    
+                    # If no text was extracted, fall through to Gemini upload
+                    logger.info(f"No text extracted from {file_type}, trying Gemini upload...")
+                    
+                except Exception as e:
+                    logger.warning(f"Local {file_type} processing failed, trying Gemini upload: {e}")
+                
+                # Try Gemini upload as fallback
                 try:
                     return await self._process_file_with_gemini(queries, file_bytes, file_type, api_key)
                 except Exception as e:
-                    logger.warning(f"Gemini upload failed for {file_type}, trying text extraction: {e}")
+                    logger.error(f"Gemini upload failed for {file_type}: {e}")
+                    raise Exception(f"Failed to process {file_type} file: {e}")
             
-            # Fallback to text extraction for other types or if upload fails
+            # For other file types, use the text-based processing
             return await self._process_text_based_file(queries, file_bytes, file_type, api_key)
             
         except Exception as e:
