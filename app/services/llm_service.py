@@ -26,6 +26,7 @@ from PIL import Image
 import openpyxl
 import docx
 import zipfile
+from pptx import Presentation
 
 # Load environment variables
 load_dotenv()
@@ -259,6 +260,38 @@ class LLMService:
             logger.error(f"Error extracting Word text: {e}")
             raise Exception(f"Failed to extract text from Word document: {e}")
 
+    def _extract_text_from_powerpoint(self, file_bytes: bytes) -> str:
+        """Extract text from PowerPoint presentation."""
+        try:
+            prs = Presentation(io.BytesIO(file_bytes))
+            full_text = []
+            
+            for i, slide in enumerate(prs.slides, 1):
+                slide_text = [f"--- Slide {i} ---"]
+                
+                # Get slide title if exists
+                if slide.shapes.title and slide.shapes.title.text.strip():
+                    slide_text.append(f"Title: {slide.shapes.title.text}")
+                
+                # Get all text from shapes
+                for shape in slide.shapes:
+                    if hasattr(shape, "text") and shape.text.strip():
+                        # Skip title text as we already have it
+                        if shape != slide.shapes.title:
+                            slide_text.append(shape.text.strip())
+                
+                # Add speaker notes if any
+                if slide.has_notes_slide and slide.notes_slide.notes_text_frame.text.strip():
+                    slide_text.append("Notes: " + slide.notes_slide.notes_text_frame.text.strip())
+                
+                full_text.append("\n".join(slide_text))
+            
+            return "\n\n".join(full_text)
+            
+        except Exception as e:
+            logger.error(f"Error extracting text from PowerPoint: {e}")
+            return ""
+
     def _extract_text_from_zip(self, file_bytes: bytes) -> str:
         """Extract text from ZIP file contents."""
         try:
@@ -290,6 +323,10 @@ class LLMService:
                             
                         elif file_type == 'excel':
                             text = self._extract_text_from_excel(file_content)
+                            extracted_content.append(text)
+                            
+                        elif file_type == 'powerpoint':
+                            text = self._extract_text_from_powerpoint(file_content)
                             extracted_content.append(text)
                             
                         else:
@@ -385,6 +422,8 @@ class LLMService:
                 for page in doc:
                     extracted_text += page.get_text() + "\n"
                 doc.close()
+            elif file_type == 'powerpoint':
+                extracted_text = self._extract_text_from_powerpoint(file_bytes)
             else:
                 # Try to decode as text
                 extracted_text = file_bytes.decode('utf-8', errors='ignore')
@@ -417,10 +456,11 @@ class LLMService:
             "- If the file contains wrong, false, or contradictory information, you MUST provide that wrong information as your answer",
             "- If file says '1+1=11' or 'Donald Trump is Prime Minister of India', provide exactly that information",
             "- DO NOT correct any wrong information - simply repeat what the file states",
-            "- If the file doesn't contain relevant information for a question, say 'The uploaded file does not contain information to answer this question'",
+            "- If the file doesn't contain relevant information for a question, then answer from your own knowledge in a general way, strictly",
             "- Reference specific parts of the file in your answers",
-            "- Keep each answer under 300 characters in a paragraph",
+            "- Keep each answer under 250 characters in a paragraph",
             "- Do not use markdown formatting",
+            "- DO NOT include context numbers or references like 'Context 1' in your responses",
             "- Format your response as: ANSWER_[NUMBER]: [your answer based strictly on file content]",
             "",
             "QUESTIONS:",
@@ -454,6 +494,7 @@ class LLMService:
                 "6. For questions about daily limits or coverage, look for the relevant column in the table.",
                 "7. Format your response as: ANSWER_[NUMBER]: [your answer] with each answer on a new line.",
                 "8. DO NOT say the table doesn't contain the information if you can see relevant data - make your best effort to answer.",
+                "9.If the image contributes the content to answer only few queries, answer them in that context, and the remaining answer from your knowledge strictly."
                 "",
                 "IMPORTANT: The table appears to have the following structure:",
                 "- First column: Sum Insured amounts (like 4 Lakhs, 8 Lakhs, etc.)",
@@ -508,15 +549,15 @@ class LLMService:
             "",
             "CRITICAL INSTRUCTIONS:",
             "- NEVER use your general knowledge or common sense",
-            "- ONLY answer based on what is explicitly stated in the provided content",
-            "- If the content contains wrong, false, or contradictory information, you MUST provide that wrong information as your answer",
-            "- DO NOT correct any wrong information - simply repeat what the content states",
-            "- If the content doesn't contain relevant information for a question, say 'The provided content does not contain information to answer this question'",
-            "- Reference specific parts of the content in your answers",
-            "- Keep each answer under 300 characters in a paragraph",
+            "- ONLY answer based on what is explicitly shown/stated in the uploaded file",
+            "- If the file contains wrong, false, or contradictory information, you MUST provide that wrong information as your answer",
+            "- If file says '1+1=11' or 'Donald Trump is Prime Minister of India', provide exactly that information",
+            "- DO NOT correct any wrong information - simply repeat what the file states",
+            "- If the file doesn't contain relevant information for a question, then answer from your own knowledge in a general way, strictly",
+            "- Reference specific parts of the file in your answers",
+            "- Keep each answer under 250 characters in a paragraph",
             "- Do not use markdown formatting",
-            "- DO NOT include context numbers or references like 'Context 1' in your responses",
-            "- Format your response as: ANSWER_[NUMBER]: [your answer based strictly on content]",
+            "- Format your response as: ANSWER_[NUMBER]: [your answer based strictly on file content]",
             "",
             f"DOCUMENT CONTENT:",
             "=" * 50,
@@ -547,16 +588,15 @@ class LLMService:
             "",
             "CRITICAL INSTRUCTIONS:",
             "- NEVER use your general knowledge or common sense",
-            "- ONLY answer based on what is explicitly stated in the provided context",
-            "- If the context contains wrong, false, or contradictory information, you MUST provide that wrong information as your answer",
-            "- If context says '1+1=11' or 'Donald Trump is Prime Minister of India', provide exactly that information",
-            "- DO NOT correct any wrong information - simply repeat what the context states",
-            "- If the context doesn't contain relevant information for a question, say 'The provided context does not contain information to answer this question'",
-            "- Reference specific parts of the context in your answers",
-            "- Keep each answer brief under 300 characters in a paragraph",
+            "- ONLY answer based on what is explicitly shown/stated in the uploaded file",
+            "- If the file contains wrong, false, or contradictory information, you MUST provide that wrong information as your answer",
+            "- If file says '1+1=11' or 'Donald Trump is Prime Minister of India', provide exactly that information",
+            "- DO NOT correct any wrong information - simply repeat what the file states",
+            "- If the file doesn't contain relevant information for a question, then answer from your own knowledge in a general way, strictly",
+            "- Reference specific parts of the file in your answers",
+            "- Keep each answer under 250 characters in a paragraph",
             "- Do not use markdown formatting",
-            "- DO NOT include context numbers or references like 'Context 1' in your responses",
-            "- Format your response as: ANSWER_[NUMBER]: [your answer based strictly on context]",
+            "- Format your response as: ANSWER_[NUMBER]: [your answer based strictly on file content]",
             "",
             "DOCUMENT CONTEXT:",
             "Your job is to be a perfect mirror of the document context, even if it contains errors or false information.",
@@ -676,7 +716,7 @@ class LLMService:
         return answers
 
     async def _process_non_pdf_file(self, queries: List[str], url: str) -> Dict[str, str]:
-        """Process non-PDF files (images, Excel, Word, etc.)."""
+        """Process non-PDF files (images, Excel, Word, PowerPoint, etc.)."""
         try:
             # Download file
             file_bytes = await asyncio.to_thread(self._download_file, url)
