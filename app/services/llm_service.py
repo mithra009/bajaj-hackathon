@@ -261,36 +261,104 @@ class LLMService:
             raise Exception(f"Failed to extract text from Word document: {e}")
 
     def _extract_text_from_powerpoint(self, file_bytes: bytes) -> str:
-        """Extract text from PowerPoint presentation."""
+        """
+        Extract text from PowerPoint presentation with detailed error handling.
+        Returns extracted text or raises an exception with detailed error information.
+        """
         try:
-            prs = Presentation(io.BytesIO(file_bytes))
-            full_text = []
+            logger.info("Starting PowerPoint text extraction...")
+            start_time = time.time()
             
-            for i, slide in enumerate(prs.slides, 1):
-                slide_text = [f"--- Slide {i} ---"]
-                
-                # Get slide title if exists
-                if slide.shapes.title and slide.shapes.title.text.strip():
-                    slide_text.append(f"Title: {slide.shapes.title.text}")
-                
-                # Get all text from shapes
-                for shape in slide.shapes:
-                    if hasattr(shape, "text") and shape.text.strip():
-                        # Skip title text as we already have it
-                        if shape != slide.shapes.title:
-                            slide_text.append(shape.text.strip())
-                
-                # Add speaker notes if any
-                if slide.has_notes_slide and slide.notes_slide.notes_text_frame.text.strip():
-                    slide_text.append("Notes: " + slide.notes_slide.notes_text_frame.text.strip())
-                
-                full_text.append("\n".join(slide_text))
+            # Create a temporary file to help with debugging
+            with tempfile.NamedTemporaryFile(suffix='.pptx', delete=False) as temp_file:
+                temp_file.write(file_bytes)
+                temp_path = temp_file.name
             
-            return "\n\n".join(full_text)
+            try:
+                # Try to load the presentation
+                prs = Presentation(temp_path)
+                total_slides = len(prs.slides)
+                logger.info(f"Successfully loaded PowerPoint with {total_slides} slides")
+                
+                full_text = []
+                slides_processed = 0
+                
+                for i, slide in enumerate(prs.slides, 1):
+                    try:
+                        slide_text = [f"--- Slide {i} ---"]
+                        
+                        # Get slide title if exists
+                        if slide.shapes.title and slide.shapes.title.text.strip():
+                            title = slide.shapes.title.text.strip()
+                            slide_text.append(f"Title: {title}")
+                        
+                        # Get all text from shapes
+                        for shape in slide.shapes:
+                            try:
+                                if hasattr(shape, "text") and shape.text and shape.text.strip():
+                                    # Skip title text as we already have it
+                                    if not (hasattr(slide.shapes, 'title') and shape == slide.shapes.title):
+                                        text = shape.text.strip()
+                                        if text:  # Only add non-empty text
+                                            slide_text.append(text)
+                                
+                                # Handle tables if present
+                                if shape.has_table:
+                                    table_text = []
+                                    for row in shape.table.rows:
+                                        row_text = []
+                                        for cell in row.cells:
+                                            if cell.text and cell.text.strip():
+                                                row_text.append(cell.text.strip())
+                                        if row_text:
+                                            table_text.append(" | ".join(row_text))
+                                    if table_text:
+                                        slide_text.append("Table:\n" + "\n".join(table_text))
+                                        
+                            except Exception as shape_error:
+                                logger.warning(f"Error processing shape in slide {i}: {shape_error}")
+                                continue
+                        
+                        # Add speaker notes if any
+                        try:
+                            if slide.has_notes_slide and slide.notes_slide.notes_text_frame and slide.notes_slide.notes_text_frame.text.strip():
+                                notes = slide.notes_slide.notes_text_frame.text.strip()
+                                slide_text.append(f"Notes: {notes}")
+                        except Exception as notes_error:
+                            logger.warning(f"Error reading notes for slide {i}: {notes_error}")
+                        
+                        full_text.append("\n".join(slide_text))
+                        slides_processed += 1
+                        
+                    except Exception as slide_error:
+                        logger.error(f"Error processing slide {i}: {slide_error}")
+                        full_text.append(f"--- Slide {i} [Error processing slide] ---")
+                
+                result = "\n\n".join(full_text)
+                processing_time = time.time() - start_time
+                
+                logger.info(
+                    f"PowerPoint processing completed in {processing_time:.2f}s. "
+                    f"Processed {slides_processed}/{total_slides} slides. "
+                    f"Extracted {len(result)} characters."
+                )
+                
+                if not result.strip():
+                    raise ValueError("No text content could be extracted from the PowerPoint file")
+                    
+                return result
+                
+            finally:
+                # Clean up temporary file
+                try:
+                    os.unlink(temp_path)
+                except Exception as cleanup_error:
+                    logger.warning(f"Error cleaning up temporary file: {cleanup_error}")
             
         except Exception as e:
-            logger.error(f"Error extracting text from PowerPoint: {e}")
-            return ""
+            error_msg = f"Failed to extract text from PowerPoint: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            raise Exception(error_msg)
 
     def _extract_text_from_zip(self, file_bytes: bytes) -> str:
         """Extract text from ZIP file contents."""
@@ -494,7 +562,7 @@ class LLMService:
                 "6. For questions about daily limits or coverage, look for the relevant column in the table.",
                 "7. Format your response as: ANSWER_[NUMBER]: [your answer] with each answer on a new line.",
                 "8. DO NOT say the table doesn't contain the information if you can see relevant data - make your best effort to answer.",
-                "9.If the image contributes the content to answer only few queries, answer them in that context, and the remaining answer from your knowledge strictly."
+                "9.If the image contributes the content to answer only few queries, answer them in that context, and the remaining answer from your knowledge strictly, do not mention fie doesnot contain information",
                 "",
                 "IMPORTANT: The table appears to have the following structure:",
                 "- First column: Sum Insured amounts (like 4 Lakhs, 8 Lakhs, etc.)",
@@ -759,14 +827,13 @@ class LLMService:
                         "CRITICAL INSTRUCTIONS FOR MATHEMATICAL EXPRESSIONS:",
                         "1. For each question asking for a calculation (e.g., 'What is X+Y?'), do the following:",
                         "   - If the exact calculation is shown in the image, report it EXACTLY as shown, even if it's incorrect.",
-                        "   - If the image shows the expression but not the answer, write 'Expression [X+Y] is shown but no answer is visible'.",
+                        "   - If the image shows the expression but not the answer,then answer correctly from your own knowledge",
                         "   - If the expression is not shown at all, answer the expression [X+Y] correctly from your knowledge.",
                         "2. DO NOT perform any calculations or correct any mathematical errors you see in the image.",
                         "3. If you see text that looks like a math problem, report it EXACTLY as written, including any typos or errors.",
                         "4. If the image contains a table with numbers, read them exactly as they appear, even if they seem incorrect.",
-                        "5. DO NOT use any external knowledge or make assumptions. Do not guess or hallucinate.",
-                        "6. Format your response STRICTLY as: ANSWER_[NUMBER]: [your answer]",
-                        "7. Each answer must be on a new line.",
+                        "5. Format your response STRICTLY as: ANSWER_[NUMBER]: [your answer]",
+                        "6. Each answer must be on a new line.",
                         "",
                         "QUESTIONS ABOUT THE IMAGE CONTENT:"
                     ]
