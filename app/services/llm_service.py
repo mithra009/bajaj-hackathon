@@ -2,7 +2,7 @@ import os
 import sys
 import asyncio
 import google.generativeai as genai
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Callable
 from urllib.parse import urlparse
 import requests
 import time
@@ -27,6 +27,72 @@ import openpyxl
 import docx
 import zipfile
 from pptx import Presentation
+from dataclasses import dataclass
+from typing import List, Optional, Dict, Any, Callable
+import re
+
+@dataclass
+class TextSplitter:
+    """Recursive text splitter that splits text into chunks based on separators."""
+    chunk_size: int = 1000
+    chunk_overlap: int = 200
+    separators: Optional[List[str]] = None
+    length_function: Callable[[str], int] = len
+    
+    def __post_init__(self):
+        if self.separators is None:
+            self.separators = ["\n\n", "\n", ". ", "? ", "! ", " ", ""]
+    
+    def split_text(self, text: str) -> List[str]:
+        """Split text into chunks using recursive splitting on separators."""
+        final_chunks = []
+        self._split_text_recursive(text, self.separators, final_chunks)
+        return final_chunks
+    
+    def _split_text_recursive(self, text: str, separators: List[str], final_chunks: List[str]) -> None:
+        """Recursively split text into chunks."""
+        # Get the current separator
+        separator = separators[0] if separators else ""
+        
+        # Split the text
+        if separator:
+            splits = text.split(separator)
+        else:
+            splits = list(text)
+        
+        # Merge the splits, now splitting them
+        good_splits = []
+        current_chunk = ""
+        
+        for s in splits:
+            if separator and separator not in self.separators[-1]:
+                s = s + separator
+                
+            if len(current_chunk) + len(s) < self.chunk_size:
+                current_chunk += s
+            else:
+                if current_chunk:
+                    good_splits.append(current_chunk.strip())
+                current_chunk = s
+        
+        if current_chunk:
+            good_splits.append(current_chunk.strip())
+        
+        # If we have more separators to try, recurse
+        if len(separators) > 1:
+            new_separators = separators[1:]
+            new_splits = []
+            for s in good_splits:
+                if len(s) > self.chunk_size + self.chunk_overlap:
+                    new_splits.extend(self._split_text_recursive(s, new_separators, final_chunks))
+                else:
+                    new_splits.append(s)
+            good_splits = new_splits
+        
+        # Add the final chunks
+        for s in good_splits:
+            if len(s) > 0:
+                final_chunks.append(s)
 
 # Load environment variables
 load_dotenv()
@@ -516,20 +582,17 @@ class LLMService:
     def _prepare_file_analysis_prompt(self, queries: List[str]) -> str:
         """Prepare prompt for file analysis with Gemini upload."""
         prompt_parts = [
-            "You are an expert document analyzer. Analyze the uploaded file and answer the following questions based STRICTLY on its content.",
+            "You are an expert document analyzer. Analyze the uploaded file and answer the following questions based on its content or from your general knowledge if the information is not found.",
             "",
             "CRITICAL INSTRUCTIONS:",
-            "- NEVER use your general knowledge or common sense",
-            "- ONLY answer based on what is explicitly shown/stated in the uploaded file",
-            "- If the file contains wrong, false, or contradictory information, you MUST provide that wrong information as your answer",
-            "- If file says '1+1=11' or 'Donald Trump is Prime Minister of India', provide exactly that information",
-            "- DO NOT correct any wrong information - simply repeat what the file states",
-            "- If the file doesn't contain relevant information for a question, then answer from your own knowledge in a general way, strictly",
-            "- Reference specific parts of the file in your answers",
-            "- Keep each answer under 200 characters in a paragraph",
-            "- Do not use markdown formatting",
-            "- DO NOT include context numbers or references like 'Context 1' in your responses",
-            "- Format your response as: ANSWER_[NUMBER]: [your answer based strictly on file content]",
+            "- For each question, first try to find the answer in the uploaded file.",
+            "- If the exact information is found in the file, provide it exactly as written, even if it's incorrect.",
+            "- If the information is not found in the file, provide a correct and concise answer from your general knowledge.",
+            "- DO NOT mention that the information is not in the file - just provide the answer directly.",
+            "- Keep each answer under 200 characters in a paragraph.",
+            "- Do not use markdown formatting.",
+            "- DO NOT include context numbers or references like 'Context 1' in your responses.",
+            "- Format your response as: ANSWER_[NUMBER]: [your answer]",
             "",
             "QUESTIONS:",
             ""
@@ -540,8 +603,12 @@ class LLMService:
         
         prompt_parts.extend([
             "",
-            "Analyze the uploaded file and provide answers STRICTLY based on its content.",
-            "Format: ANSWER_[NUMBER]: [answer based only on file content]"
+            "For each question:",
+            "1. If the answer is in the file, provide it exactly as written.",
+            "2. If not in the file, provide a correct answer from your knowledge.",
+            "3. Never say the information is not in the file.",
+            "",
+            "Format: ANSWER_[NUMBER]: [answer]"
         ])
         
         return "\n".join(prompt_parts)
@@ -613,19 +680,16 @@ class LLMService:
     def _prepare_text_analysis_prompt(self, queries: List[str], extracted_text: str, file_type: str) -> str:
         """Prepare prompt for text-based analysis."""
         prompt_parts = [
-            f"You are an expert {file_type.upper()} analyzer. Answer questions based STRICTLY on the provided {file_type} content.",
+            f"You are an expert {file_type.upper()} analyzer. Answer questions based on the provided {file_type} content or from your general knowledge if the information is not found.",
             "",
             "CRITICAL INSTRUCTIONS:",
-            "- NEVER use your general knowledge or common sense",
-            "- ONLY answer based on what is explicitly shown/stated in the uploaded file",
-            "- If the file contains wrong, false, or contradictory information, you MUST provide that wrong information as your answer",
-            "- If file says '1+1=11' or 'Donald Trump is Prime Minister of India', provide exactly that information",
-            "- DO NOT correct any wrong information - simply repeat what the file states",
-            "- If the file doesn't contain relevant information for a question, then answer from your own knowledge in a general way, strictly",
-            "- Reference specific parts of the file in your answers",
-            "- Keep each answer under 200 characters in a paragraph",
-            "- Do not use markdown formatting",
-            "- Format your response as: ANSWER_[NUMBER]: [your answer based strictly on file content]",
+            "- For each question, first try to find the answer in the provided document content.",
+            "- If the exact information is found in the document, provide it exactly as written, even if it's incorrect.",
+            "- If the information is not found in the document, provide a correct and concise answer from your general knowledge.",
+            "- DO NOT mention that the information is not in the document - just provide the answer directly.",
+            "- Keep each answer under 200 characters in a paragraph.",
+            "- Do not use markdown formatting.",
+            "- Format your response as: ANSWER_[NUMBER]: [your answer]",
             "",
             f"DOCUMENT CONTENT:",
             "=" * 50,
@@ -641,8 +705,12 @@ class LLMService:
         
         prompt_parts.extend([
             "",
-            "Provide answers STRICTLY based on the content provided above.",
-            "Format: ANSWER_[NUMBER]: [answer based only on file content]"
+            "For each question:",
+            "1. If the answer is in the document, provide it exactly as written.",
+            "2. If not in the document, provide a correct answer from your knowledge.",
+            "3. Never say the information is not in the document.",
+            "",
+            "Format: ANSWER_[NUMBER]: [answer]"
         ])
         
         return "\n".join(prompt_parts)
@@ -828,7 +896,7 @@ class LLMService:
                         "1. For each question asking for a calculation (e.g., 'What is X+Y?'), do the following:",
                         "   - If the exact calculation is shown in the image, report it EXACTLY as shown, even if it's incorrect.",
                         "   - If the image shows the expression but not the answer,then answer correctly from your own knowledge",
-                        "   - If the expression is not shown at all, answer the expression [X+Y] correctly from your knowledge.",
+                        "   - If the expression is not shown at all, answer the expression correctly from your knowledge.",
                         "2. DO NOT perform any calculations or correct any mathematical errors you see in the image.",
                         "3. If you see text that looks like a math problem, report it EXACTLY as written, including any typos or errors.",
                         "4. If the image contains a table with numbers, read them exactly as they appear, even if they seem incorrect.",
@@ -995,95 +1063,73 @@ class LLMService:
             return chunks[:top_k] if chunks else []
 
     def extract_chunks_optimized(self, pdf_bytes: bytes, max_chars: int = 1200) -> List[str]:
-        """Optimized text extraction with aggressive chunking for large documents."""
+        """
+        Optimized text extraction with recursive text splitting for better semantic chunking.
+        
+        Args:
+            pdf_bytes: Bytes of the PDF file
+            max_chars: Maximum characters per chunk (default: 1200)
+            
+        Returns:
+            List of text chunks with preserved semantic structure
+        """
         try:
+            # Initialize the recursive text splitter
+            text_splitter = TextSplitter(
+                chunk_size=max_chars,
+                chunk_overlap=int(max_chars * 0.1),  # 10% overlap
+                separators=["\n\n\n", "\n\n", ". ", "? ", "! ", " ", ""]
+            )
+            
             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
             chunks = []
             
             total_pages = len(doc)
             if total_pages > 100:
-                max_chars = 1500
+                # Adjust chunk size for very large documents
+                text_splitter.chunk_size = 1500
+                text_splitter.chunk_overlap = 150  # 10% of 1500
                 logger.info(f"Large document detected ({total_pages} pages), using larger chunks")
             
+            # Extract and clean text from each page
             for page_num, page in enumerate(doc):
-                text = page.get_text("text").strip()
-                if not text:
+                try:
+                    # Get text with layout preservation
+                    text = page.get_text("text").strip()
+                    if not text:
+                        continue
+                    
+                    # Clean up the text
+                    text = re.sub(r'\s+', ' ', text)  # Normalize whitespace
+                    text = re.sub(r'[^\w\s\\.\\,\\;\\:\\!\\?\\(\\)\\-\\%\\$\\n]', ' ', text)
+                    
+                    # Split the text into chunks using the recursive splitter
+                    page_chunks = text_splitter.split_text(text)
+                    
+                    # Add page number to each chunk for reference
+                    for chunk in page_chunks:
+                        if len(chunk) > 50:  # Only add chunks with meaningful content
+                            chunks.append(f"[Page {page_num + 1}] {chunk}")
+                    
+                    # Safety check to prevent memory issues with very large documents
+                    if len(chunks) > 1000:
+                        logger.warning(f"Reached chunk limit at page {page_num + 1}")
+                        break
+                        
+                except Exception as e:
+                    logger.warning(f"Error processing page {page_num + 1}: {e}")
                     continue
-                
-                text = re.sub(r'\s+', ' ', text)
-                text = re.sub(r'[^\w\s\.\,\;\:\!\?\(\)\-\%\$]', ' ', text)
-                
-                if total_pages > 50:
-                    paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
-                    
-                    current_chunk = ""
-                    for para in paragraphs:
-                        if len(current_chunk) + len(para) + 2 > max_chars:
-                            if current_chunk:
-                                chunks.append(current_chunk.strip())
-                                current_chunk = para
-                            else:
-                                sentences = re.split(r'[.!?]+', para)
-                                temp_chunk = ""
-                                for sentence in sentences:
-                                    sentence = sentence.strip()
-                                    if not sentence:
-                                        continue
-                                    if len(temp_chunk) + len(sentence) + 2 > max_chars:
-                                        if temp_chunk:
-                                            chunks.append(temp_chunk.strip())
-                                            temp_chunk = sentence
-                                    else:
-                                        temp_chunk += ". " + sentence if temp_chunk else sentence
-                                if temp_chunk:
-                                    current_chunk = temp_chunk
-                        else:
-                            current_chunk += "\n\n" + para if current_chunk else para
-                    
-                    if current_chunk:
-                        chunks.append(current_chunk.strip())
-                else:
-                    sentences = re.split(r'[.!?]+', text)
-                    
-                    current_chunk = ""
-                    for sentence in sentences:
-                        sentence = sentence.strip()
-                        if not sentence:
-                            continue
-                            
-                        if len(current_chunk) + len(sentence) + 2 > max_chars:
-                            if current_chunk:
-                                chunks.append(current_chunk.strip())
-                                current_chunk = sentence
-                            else:
-                                words = sentence.split()
-                                temp_chunk = ""
-                                for word in words:
-                                    if len(temp_chunk) + len(word) + 1 > max_chars:
-                                        if temp_chunk:
-                                            chunks.append(temp_chunk.strip())
-                                            temp_chunk = word
-                                        else:
-                                            chunks.append(word)
-                                    else:
-                                        temp_chunk += " " + word if temp_chunk else word
-                                if temp_chunk:
-                                    current_chunk = temp_chunk
-                        else:
-                            current_chunk += ". " + sentence if current_chunk else sentence
-                    
-                    if current_chunk:
-                        chunks.append(current_chunk.strip())
-                    
-                if len(chunks) > 1000:
-                    logger.warning(f"Reached chunk limit at page {page_num + 1}")
-                    break
             
+            # Post-process chunks
             min_chunk_size = 100 if total_pages > 100 else 50
-            chunks = [chunk for chunk in chunks if len(chunk) > min_chunk_size]
+            final_chunks = [chunk for chunk in chunks if len(chunk) > min_chunk_size]
             
-            logger.info(f"Extracted {len(chunks)} optimized chunks from {total_pages}-page document")
-            return chunks
+            # Log statistics
+            avg_chunk_size = sum(len(chunk) for chunk in final_chunks) / len(final_chunks) if final_chunks else 0
+            logger.info(f"Extracted {len(final_chunks)} chunks from {total_pages} pages "
+                       f"(avg. {avg_chunk_size:.0f} chars per chunk)")
+            
+            return final_chunks
             
         except Exception as e:
             logger.error(f"Error extracting text from PDF: {e}")
