@@ -582,17 +582,18 @@ class LLMService:
     def _prepare_file_analysis_prompt(self, queries: List[str]) -> str:
         """Prepare prompt for file analysis with Gemini upload."""
         prompt_parts = [
-            "You are an expert document analyzer. Your task is to answer questions based on the uploaded file or from your general knowledge if the information is not found.",
+            "You are an expert health insurance policy analyzer. Provide clear, concise answers to questions about the policy document.",
+            "",
+            "EXAMPLE QUERY AND ANSWER:",
+            "Query: 'I have raised a claim for hospitalization for Rs 200,000 with HDFC, and it's approved. My total expenses are Rs 250,000. Can I raise the remaining Rs 50,000 with you?'",
+            "Answer: 'Yes, under Arogya Sanjeevani Policy under Clause 10.8'",
             "",
             "CRITICAL INSTRUCTIONS:",
-            "1. For each question, first try to find the answer in the uploaded file.",
-            "2. If the exact information is found in the file, provide it exactly as written, even if it's incorrect.",
-            "3. If the information is not found in the file, provide a correct and concise answer from your general knowledge.",
-            "4. NEVER say that the information is not in the file - always provide an answer.",
-            "5. Do not mention whether the answer came from the file or your knowledge - just provide the answer.",
-            "6. Keep each answer under 200 characters in a paragraph.",
-            "7. Do not use markdown formatting or special formatting.",
-            "8. Format your response as: ANSWER_[NUMBER]: [your answer]",
+            "1. First try to find the answer in the uploaded file, citing relevant sections.",
+            "2. If not found, provide a concise answer from your knowledge, mentioning it's based on standard policy terms.",
+            "3. NEVER say information is not available - always provide a helpful response.",
+            "4. Keep answers around 250 characters, focusing on key details and section references.",
+            "5. Format: ANSWER_[NUMBER]: [concise answer with section references]",
             "",
             "QUESTIONS:",
             ""
@@ -603,12 +604,11 @@ class LLMService:
         
         prompt_parts.extend([
             "",
-            "IMPORTANT: For each question, provide a direct answer without indicating the source.",
-            "- If the answer is in the file, provide it exactly as written.",
-            "- If not in the file, provide a correct answer from your knowledge.",
-            "- Never say the information is not available or not in the file.",
-            "",
-            "Format: ANSWER_[NUMBER]: [answer]"
+            "RESPONSE FORMAT:",
+            "- Be specific and reference policy sections when possible (e.g., 'As per Section 4.2, this is covered...')",
+            "- For claim-related queries, mention relevant clauses (e.g., 'Under Clause 10.8, you can claim...')",
+            "- Keep responses concise but informative (around 250 characters)",
+            "- If exact section isn't found, provide the most relevant information available"
         ])
         
         return "\n".join(prompt_parts)
@@ -678,19 +678,20 @@ class LLMService:
             raise Exception(f"Gemini image processing failed: {e}")
 
     def _prepare_text_analysis_prompt(self, queries: List[str], extracted_text: str, file_type: str) -> str:
-        """Prepare prompt for text-based analysis."""
+        """Prepare prompt for text-based analysis with policy-specific instructions."""
         prompt_parts = [
-            f"You are an expert {file_type.upper()} analyzer. Answer the following questions based on the provided document content or from your general knowledge.",
+            f"You are an expert {file_type.upper()} policy analyzer. Answer questions based on the document content with specific section references.",
+            "",
+            "EXAMPLE QUERY AND ANSWER:",
+            "Query: 'I have raised a claim for hospitalization for Rs 200,000 with HDFC, and it's approved. My total expenses are Rs 250,000. Can I raise the remaining Rs 50,000 with you?'",
+            "Answer: 'Yes, under Arogya Sanjeevani Policy under Clause 10.8'",
             "",
             "CRITICAL INSTRUCTIONS:",
-            "1. For each question, first try to find the answer in the provided document content.",
-            "2. If the exact information is found in the document, provide it exactly as written, even if it's incorrect.",
-            "3. If the information is not found in the document, provide a correct and concise answer from your general knowledge.",
-            "4. NEVER say that the information is not in the document - always provide an answer.",
-            "5. Do not mention whether the answer came from the document or your knowledge - just provide the answer.",
-            "6. Keep each answer under 200 characters in a paragraph.",
-            "7. Do not use markdown formatting or special formatting.",
-            "8. Format your response as: ANSWER_[NUMBER]: [your answer]",
+            "1. First search the document for the answer, including section numbers in your response.",
+            "2. If not found, provide a concise answer based on standard policy terms.",
+            "3. Keep responses around 250 characters, focusing on key details and section references.",
+            "4. For claim-related queries, mention relevant clauses (e.g., 'Under Clause 10.8...')",
+            "5. Format: ANSWER_[NUMBER]: [concise answer with section references]",
             "",
             f"DOCUMENT CONTENT:",
             "=" * 50,
@@ -706,54 +707,56 @@ class LLMService:
         
         prompt_parts.extend([
             "",
-            "IMPORTANT: For each question, provide a direct answer without indicating the source.",
-            "- If the answer is in the document, provide it exactly as written.",
-            "- If not in the document, provide a correct answer from your knowledge.",
-            "- Never say the information is not available or not in the document.",
-            "",
-            "Format: ANSWER_[NUMBER]: [answer]"
+            "RESPONSE GUIDELINES:",
+            "- Reference specific sections (e.g., 'As per Section 4.2...' or 'Under Clause 10.8...')",
+            "- For claim amounts, specify coverage limits and conditions",
+            "- Keep answers concise but informative (around 250 characters)",
+            "- If exact section isn't found, provide the most relevant information available"
         ])
         
         return "\n".join(prompt_parts)
 
     def _prepare_batch_query_prompt(self, queries_with_context: List[Tuple[int, str, List[str]]]) -> str:
-        """Prepares a batch prompt for multiple queries with their relevant contexts."""
+        """Prepares a batch prompt for multiple policy-related queries with context."""
         
-        # Build the batch prompt with instructions to answer from context or knowledge
+        # Build the batch prompt with policy-specific instructions
         prompt_parts = [
-            "You are an expert document analyzer. Answer questions based on the provided context or from your general knowledge if the information is not found.",
+            "You are an expert health insurance policy analyst. Answer questions based on the provided policy context or standard policy knowledge.",
+            "",
+            "EXAMPLE QUERY AND ANSWER:",
+            "Query: 'I have raised a claim for hospitalization for Rs 200,000 with HDFC, and it's approved. My total expenses are Rs 250,000. Can I raise the remaining Rs 50,000 with you?'",
+            "Answer: 'Yes, under Arogya Sanjeevani Policy under Clause 10.8'",
             "",
             "CRITICAL INSTRUCTIONS:",
-            "1. For each question, first try to find the answer in the provided context.",
-            "2. If the exact information is found in the context, provide it exactly as written, even if it's incorrect.",
-            "3. If the information is not found in the context, provide a correct and concise answer from your general knowledge.",
-            "4. NEVER say that the information is not in the context - always provide an answer.",
-            "5. Do not mention whether the answer came from the context or your knowledge.",
-            "6. Keep each answer under 250 characters in a paragraph.",
-            "7. Do not use markdown formatting or special formatting.",
-            "8. Format your response as: ANSWER_[NUMBER]: [your answer]",
+            "1. For each question, search the provided context for relevant policy sections.",
+            "2. If found, provide a concise answer (around 250 chars) with section references.",
+            "3. If not found, provide a general answer based on standard policy terms.",
+            "4. For claim-related queries, mention relevant clauses (e.g., 'Under Clause 10.8...')",
+            "5. Format: ANSWER_[NUMBER]: [concise answer with section references]",
             "",
-            "QUESTIONS AND CONTEXTS:",
+            "QUESTIONS AND POLICY CONTEXTS:",
             ""
         ]
         
         for query_num, query, context_chunks in queries_with_context:
             prompt_parts.append(f"QUESTION_{query_num}: {query}")
-            prompt_parts.append("RELEVANT CONTEXT FROM DOCUMENT:")
+            prompt_parts.append("RELEVANT POLICY SECTIONS:")
             if context_chunks:
-                for i, chunk in enumerate(context_chunks[:5]):  # Limit to top 5 most relevant chunks
+                for i, chunk in enumerate(context_chunks[:5]):  # Top 5 most relevant policy sections
                     prompt_parts.append(f"- {chunk}")
             else:
-                prompt_parts.append("- No specific context found")
+                prompt_parts.append("- General policy knowledge")
             prompt_parts.append("")
         
         prompt_parts.extend([
-            "IMPORTANT: For each question, provide a direct answer without indicating the source.",
-            "- If the answer is in the context, provide it exactly as written.",
-            "- If not in the context, provide a correct answer from your knowledge.",
-            "- Never say the information is not available or not in the document.",
+            "RESPONSE GUIDELINES:",
+            "1. Reference specific sections when possible (e.g., 'As per Section 4.2...' or 'Under Clause 10.8...')",
+            "2. For claim amounts, specify coverage limits and conditions",
+            "3. Keep answers concise (around 250 characters) but informative",
+            "4. For partial claims, mention portability benefits under Clause 10.8",
+            "5. If exact section isn't found, provide the most relevant information available",
             "",
-            "Format: ANSWER_[NUMBER]: [answer]"
+            "Format: ANSWER_[NUMBER]: [concise answer with section references]"
         ])
         
         return "\n".join(prompt_parts)
@@ -1037,7 +1040,7 @@ class LLMService:
                     logger.info(f"Retrying in {wait_time}s...")
                     await asyncio.sleep(wait_time)
 
-    def _find_top_chunks_optimized(self, query_emb: List[float], chunk_embs: np.ndarray, chunks: List[str], top_k: int = 5) -> List[str]:
+    def _find_top_chunks_optimized(self, query_emb: List[float], chunk_embs: np.ndarray, chunks: List[str], top_k: int = 7) -> List[str]:
         """Optimized chunk selection with better relevance scoring."""
         if len(chunk_embs) == 0:
             return chunks[:top_k] if chunks else []
