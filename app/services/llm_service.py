@@ -205,37 +205,19 @@ class LLMService:
             logger.error(f"Error downloading file: {e}")
             raise APIError(f"Failed to download file: {e}")
 
-    async def _upload_to_gemini(self, file_bytes: bytes, mime_type: str, api_key: str) -> Any:
-        """Upload file to Gemini and return file object."""
+    async def _upload_to_gemini(self, file_bytes: bytes, mime_type: str, api_key: str) -> bytes:
+        """Process file bytes directly with Gemini.
+        
+        In the current Gemini API, files are processed directly without a separate upload step.
+        We return the file bytes to be used directly in the API call.
+        """
         try:
-            genai.configure(api_key=api_key)
-            
-            # Create temporary file
-            with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-                temp_file.write(file_bytes)
-                temp_file_path = temp_file.name
-            
-            try:
-                # Upload to Gemini
-                uploaded_file = genai.upload_file(temp_file_path, mime_type=mime_type)
-                
-                # Wait for processing
-                while uploaded_file.state.name == "PROCESSING":
-                    await asyncio.sleep(1)
-                    uploaded_file = genai.get_file(uploaded_file.name)
-                
-                if uploaded_file.state.name == "FAILED":
-                    raise Exception(f"File processing failed: {uploaded_file.state}")
-                
-                return uploaded_file
-                
-            finally:
-                # Clean up temp file
-                os.unlink(temp_file_path)
+            # Simply return the file bytes - they'll be used directly in the API call
+            return file_bytes
                 
         except Exception as e:
-            logger.error(f"Error uploading to Gemini: {e}")
-            raise Exception(f"Failed to upload file to Gemini: {e}")
+            logger.error(f"Error preparing file for Gemini: {e}")
+            raise Exception(f"Failed to process file for Gemini: {e}")
 
     def _extract_text_from_excel(self, file_bytes: bytes) -> str:
         """Extract text from Excel file with detailed logging."""
@@ -325,6 +307,27 @@ class LLMService:
         except Exception as e:
             logger.error(f"Error extracting Word text: {e}")
             raise Exception(f"Failed to extract text from Word document: {e}")
+
+    def _extract_text_from_bytes(self, file_bytes: bytes, file_type: str) -> str:
+        """Extract text from file bytes based on file type."""
+        try:
+            if file_type == 'excel':
+                return self._extract_text_from_excel(file_bytes)
+            elif file_type == 'word':
+                return self._extract_text_from_word(file_bytes)
+            elif file_type == 'powerpoint':
+                return self._extract_text_from_powerpoint(file_bytes)
+            elif file_type == 'pdf':
+                return self._extract_text_from_pdf(file_bytes)
+            else:
+                # For unknown file types, try to decode as text
+                try:
+                    return file_bytes.decode('utf-8')
+                except UnicodeDecodeError:
+                    return "[Binary content - cannot be displayed as text]"
+        except Exception as e:
+            logger.error(f"Error extracting text from {file_type}: {e}")
+            return f"[Error extracting text: {str(e)}]"
 
     def _extract_text_from_powerpoint(self, file_bytes: bytes) -> str:
         """
@@ -497,13 +500,13 @@ class LLMService:
             
             mime_type = mime_types.get(file_type, 'application/octet-stream')
             
-            # Upload file to Gemini
-            uploaded_file = await self._upload_to_gemini(file_bytes, mime_type, api_key)
+            # Get the file bytes (no separate upload step needed)
+            file_data = await self._upload_to_gemini(file_bytes, mime_type, api_key)
             
             # Prepare prompt
             prompt = self._prepare_file_analysis_prompt(queries)
             
-            # Generate response
+            # Configure Gemini
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel(
                 self.model_name,
@@ -521,13 +524,13 @@ class LLMService:
                 }
             )
             
-            response = await model.generate_content_async([uploaded_file, prompt])
-            
-            # Clean up uploaded file
-            try:
-                genai.delete_file(uploaded_file.name)
-            except:
-                pass
+            # For image files, use the bytes directly
+            if file_type == 'image':
+                response = await model.generate_content_async([file_data, prompt])
+            else:
+                # For other file types, convert to text first
+                text_content = await asyncio.to_thread(self._extract_text_from_bytes, file_bytes, file_type)
+                response = await model.generate_content_async([f"File content:\n{text_content}\n\n{prompt}"])
             
             # Parse response
             query_numbers = list(range(1, len(queries) + 1))
