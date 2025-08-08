@@ -138,20 +138,21 @@ async def query_document(
     start_time = time.time()
     
     try:
-        # Process queries in parallel
-        results_dict = await llm_service.process_queries(
-            queries=query_data.questions,
-            document_link=str(query_data.documents)
+        # Process queries using the direct LLM service
+        results_dict = await direct_llm_service.process_queries(
+            document_url=str(query_data.documents),
+            queries=query_data.questions
         )
         
-        # Sort results by query index ("1", "2", ...) and extract answers
-        sorted_answers = [results_dict[str(i)] for i in sorted(results_dict.keys(), key=int)]
+        # Extract answers (they're already in order in the response)
+        answers = [results_dict.get(str(i+1), "No response generated") 
+                  for i in range(len(query_data.questions))]
         
         # Prepare the final response object
-        response_data = QueryResponse(answers=sorted_answers)
+        response_data = QueryResponse(answers=answers)
         
-        # Log the successful query
-        if background_tasks:
+        # Log the successful query if logger is available
+        if 'query_logger' in globals() and background_tasks:
             background_tasks.add_task(
                 query_logger.log_query,
                 document_link=str(query_data.documents),
