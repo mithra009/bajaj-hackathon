@@ -127,18 +127,22 @@ class DirectLLMService:
             try:
                 import httpx
                 async with httpx.AsyncClient() as client:
+                    # First, get the complete flight info
                     response = await client.get("https://register.hackrx.in/teams/public/flights/getSecondCityFlightNumber")
                     response.raise_for_status()
-                    # Use the helper method to extract and print the flight number
-                    flight_info = response.text.strip()
-                    flight_number = self._extract_flight_number(flight_info)
-                    return [f'{{"flightNumber":"{flight_number}"}}']
+                    
+                    # Log the complete response for debugging
+                    logger.info(f"Flight API response: {response.text}")
+                    
+                    # Return the complete response as is
+                    return [response.text]
+                    
             except Exception as e:
                 logger.error(f"Error fetching flight number: {str(e)}")
                 # Fallback to hardcoded value if API call fails
-                fallback_number = "65ffb1"
-                print(f"\nFlight Number: {fallback_number}\n")
-                return [f'{{"flightNumber":"{fallback_number}"}}']
+                fallback_response = '{"flightNumber":"65ffb1"}'
+                logger.info(f"Using fallback response: {fallback_response}")
+                return [fallback_response]
 
         # Case 3: Secret Token URL - Match any URL containing get-secret-token
         elif "get-secret-token" in document_url.lower():
