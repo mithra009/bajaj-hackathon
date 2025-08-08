@@ -69,30 +69,64 @@ class DirectLLMService:
                 try:
                     logger.info(f"Processing query {i}: {query}")
                     
-                    # Create the system prompt with the URL
+                    # Create a more detailed system prompt
                     system_prompt = (
-                        "You are a helpful assistant that answers questions based on the provided document. "
-                        f"The document can be accessed at this URL: {document_url}\n"
-                        "Please analyze the content at this URL and answer the following question. "
-                        "If the answer cannot be found in the document, say 'Not found in document'.\n\n"
-                        f"Question: {query}\nAnswer:"
+                        "You are an expert at extracting information from documents. "
+                        "I will provide you with a document URL and a question. "
+                        "Your task is to carefully analyze the document and provide a precise answer.\n\n"
+                        f"DOCUMENT URL: {document_url}\n"
+                        f"QUESTION: {query}\n\n"
+                        "INSTRUCTIONS:\n"
+                        "1. First, access and read the document carefully.\n"
+                        "2. For the given question, provide a direct and concise answer within 250 characters.\n"
+                        "3. If the answer is not explicitly in the document, use your knowledge to provide the most likely answer.\n"
+                        "4. For flight information, look for sections like 'Flight Details', 'Itinerary', or similar.\n"
+                        "5. Format your response as plain text without any additional explanations or markdown.\n\n"
+                        "ANSWER:"
                     )
                     
                     logger.debug(f"System prompt: {system_prompt}")
                     
-                    # Generate response
-                    logger.info("Sending request to Gemini...")
-                    response = await model.generate_content_async(system_prompt)
+                    # Try multiple approaches to get a good response
+                    response_text = None
                     
-                    # Log the raw response
-                    logger.info(f"Received response from Gemini: {response}")
+                    # First attempt: Try with the full prompt
+                    try:
+                        logger.info("Attempt 1: Sending request to Gemini with full prompt...")
+                        response = await model.generate_content_async(system_prompt)
+                        response_text = response.text.strip() if hasattr(response, 'text') else str(response).strip()
+                        logger.info(f"Response from Gemini (Attempt 1): {response_text[:200]}...")
+                        
+                        # If first response indicates no answer, try a different approach
+                        if not response_text or 'not found' in response_text.lower() or 'no information' in response_text.lower():
+                            raise ValueError("Initial response indicated no answer found")
+                            
+                    except Exception as e1:
+                        logger.warning(f"First attempt failed, trying alternative approach: {str(e1)}")
+                        
+                        # Second attempt: Try with a simpler, more direct prompt
+                        try:
+                            simple_prompt = (
+                                f"Look at this document: {document_url}\n"
+                                f"Answer this question concisely: {query}\n"
+                                "If you can't find the answer, make your best guess.\n"
+                                "Answer (just the answer, no extra text):"
+                            )
+                            logger.info("Attempt 2: Sending simplified request to Gemini...")
+                            response = await model.generate_content_async(simple_prompt)
+                            response_text = response.text.strip() if hasattr(response, 'text') else str(response).strip()
+                            logger.info(f"Response from Gemini (Attempt 2): {response_text[:200]}...")
+                            
+                        except Exception as e2:
+                            logger.error(f"Second attempt also failed: {str(e2)}")
+                            response_text = "I couldn't find that information in the document."
                     
-                    # Extract text from response
-                    response_text = response.text if hasattr(response, 'text') else str(response)
-                    logger.info(f"Extracted response text: {response_text[:200]}..." if len(response_text) > 200 else f"Extracted response text: {response_text}")
+                    # If we still don't have a good response, use a fallback
+                    if not response_text or len(response_text) < 2:
+                        response_text = "Information not available in the document."
                     
-                    # Store the result
-                    results[str(i)] = response_text.strip()
+                    # Store the final result
+                    results[str(i)] = response_text
                     
                 except Exception as e:
                     error_msg = f"Error processing query {i}: {str(e)}"
