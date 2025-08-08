@@ -94,9 +94,6 @@ class DirectLLMService:
         elif "get-secret-token" in document_url.lower():
             logger.info(f"Matched secret token URL pattern. Fetching token from: {document_url}")
             try:
-                import requests
-                from urllib.parse import urlparse
-                
                 # Ensure the URL has a scheme
                 parsed_url = urlparse(document_url)
                 if not parsed_url.scheme:
@@ -110,7 +107,7 @@ class DirectLLMService:
                 return [response.text.strip()]
                 
             except Exception as e:
-                logger.error(f"Error fetching token from URL: {str(e)}")
+                logger.error(f"Error fetching token from URL: {str(e)}", exc_info=True)
                 return ["Error: Could not retrieve token from the provided URL"]
 
         # --- Default LLM Fallback Section ---
