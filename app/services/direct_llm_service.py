@@ -92,9 +92,26 @@ class DirectLLMService:
 
         # Case 3: Secret Token URL - Match any URL containing get-secret-token
         elif "get-secret-token" in document_url.lower():
-            logger.info("Matched secret token URL pattern. Returning hardcoded secret token.")
-            # Return the hardcoded token regardless of the specific query
-            return ["0b3a0e6a1707b6d0c7adbd2c1f862ebed655934ce903ebb422e4260f894122a0"]
+            logger.info(f"Matched secret token URL pattern. Fetching token from: {document_url}")
+            try:
+                import requests
+                from urllib.parse import urlparse
+                
+                # Ensure the URL has a scheme
+                parsed_url = urlparse(document_url)
+                if not parsed_url.scheme:
+                    document_url = "https://" + document_url
+                
+                # Make the request to get the token
+                response = requests.get(document_url, timeout=10)
+                response.raise_for_status()
+                
+                # Return the response content as the token
+                return [response.text.strip()]
+                
+            except Exception as e:
+                logger.error(f"Error fetching token from URL: {str(e)}")
+                return ["Error: Could not retrieve token from the provided URL"]
 
         # --- Default LLM Fallback Section ---
         
