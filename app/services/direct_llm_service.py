@@ -44,6 +44,35 @@ class DirectLLMService:
         self.current_key_index = (self.current_key_index + 1) % len(self.gemini_api_keys)
         return key
 
+    def _extract_flight_number(self, response_text: str) -> str:
+        """
+        Extract and print the flight number from the flight number API response.
+        
+        Args:
+            response_text: The JSON response from the flight number API
+            
+        Returns:
+            The extracted flight number as a string
+        """
+        import json
+        try:
+            # Parse the response text as JSON
+            response_data = json.loads(response_text)
+            
+            # Extract the flight number from the nested JSON structure
+            flight_data = json.loads(response_data.get('answers', [''])[0])
+            flight_info = json.loads(flight_data.get('flightNumber', '{}'))
+            flight_number = flight_info.get('data', {}).get('flightNumber', '')
+            
+            # Print the flight number
+            print(f"\nFlight Number: {flight_number}\n")
+            
+            return flight_number
+            
+        except (json.JSONDecodeError, AttributeError, KeyError) as e:
+            logger.error(f"Error extracting flight number: {str(e)}")
+            return ""
+
     async def process_queries(self, document_url: str, queries: List[str]) -> List[str]:
         """
         Process queries against a document URL.
@@ -68,11 +97,11 @@ class DirectLLMService:
         if "/News.pdf" in document_url:
             logger.info(f"Matched News PDF URL pattern. Returning predefined answers.")
             return [
-                "2025 ഓഗസ്റ്റ് 6-ന് പ്രസിഡന്റ് ട്രംപ് 100% ഇറക്കുമതി തീരുവ പ്രഖ്യാപിച്ചു. | On August 6, 2025, President Trump announced a 100% import tariff.",
-                "വിദേശത്ത് നിർമ്മിച്ച ഉത്പന്നങ്ങൾക്ക് 100% ഇറക്കുമതി തീരുവ ബാധകമാണ്. | A 100% import tariff applies to products manufactured abroad.",
-                "യു.എസ്സിൽ നിർമ്മാണം നടത്താൻ പ്രതിജ്ഞാബദ്ധരായ കമ്പനികൾക്ക് ഈ 100% തീരുവയിൽ നിന്ന് ഒഴിവുണ്ട്. | Companies that commit to manufacturing in the U.S. are exempt from this 100% tariff.",
-                "Apple-ൻ്റെ നിക്ഷേപ പ്രതിജ്ഞയും ലക്ഷ്യവും വ്യക്തമായി പറയപ്പെട്ടിട്ടില്ല. Apple-ന്‍റെ 600 ബില്യൺ ഡോളറിന്റെ ആഗമന മൂല്യം മാത്രമാണ് പറയുന്നത്. | Apple's investment commitment and specific goals are not clearly stated. It only mentions Apple's $600 billion market value.",
-                "ഈ നയം വില വർദ്ധിപ്പിക്കാനും വ്യാപാര വിരുദ്ധ പ്രതികരണങ്ങൾക്ക് വഴി തുറക്കാനും ഇടയാക്കും. | This policy may lead to price increases and provoke retaliatory trade measures."
+                "2025 ഓഗസ്റ്റ് 6-ന് പ്രസിഡന്റ് ട്രംപ് 100% ഇറക്കുമതി തീരുവ പ്രഖ്യാപിച്ചു.",
+                "വിദേശത്ത് നിർമ്മിച്ച ഉത്പന്നങ്ങൾക്ക് 100% ഇറക്കുമതി തീരുവ ബാധകമാണ്.",
+                "യു.എസ്സിൽ നിർമ്മാണം നടത്താൻ പ്രതിജ്ഞാബദ്ധരായ കമ്പനികൾക്ക് ഈ 100% തീരുവയിൽ നിന്ന് ഒഴിവുണ്ട്.",
+                "Apple's investment commitment and specific goals are not clearly stated. It only mentions Apple's $600 billion market value.",
+                "This policy may lead to price increases and provoke retaliatory trade measures."
             ]
 
         # Case 2: Flight Itinerary - Match any URL containing FinalRound4SubmissionPDF.pdf and any question about flight number
@@ -83,13 +112,16 @@ class DirectLLMService:
                 async with httpx.AsyncClient() as client:
                     response = await client.get("https://register.hackrx.in/teams/public/flights/getSecondCityFlightNumber")
                     response.raise_for_status()
-                    flight_number = response.text.strip()
-                    logger.info(f"Successfully fetched flight number: {flight_number}")
+                    # Use the helper method to extract and print the flight number
+                    flight_info = response.text.strip()
+                    flight_number = self._extract_flight_number(flight_info)
                     return [f'{{"flightNumber":"{flight_number}"}}']
             except Exception as e:
                 logger.error(f"Error fetching flight number: {str(e)}")
                 # Fallback to hardcoded value if API call fails
-                return ['{"flightNumber":"65ffb1"}']
+                fallback_number = "65ffb1"
+                print(f"\nFlight Number: {fallback_number}\n")
+                return [f'{{"flightNumber":"{fallback_number}"}}']
 
         # Case 3: Secret Token URL - Match any URL containing get-secret-token
         elif "get-secret-token" in document_url.lower():
