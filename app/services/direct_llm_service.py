@@ -111,13 +111,16 @@ class DirectLLMService:
                 logger.info(f"Response status code: {response.status_code}")
                 response.raise_for_status()
                 
-                token = response.text.strip()
-                if not token:
-                    logger.error("Received empty response from the URL")
-                    return ["Error: Received empty token from the provided URL"]
-                
-                logger.info("Successfully retrieved token")
-                return [token]
+                # Extract token from HTML response
+                import re
+                token_match = re.search(r'<div id="token">([^<]+)</div>', response.text)
+                if token_match:
+                    token = token_match.group(1).strip()
+                    logger.info("Successfully extracted token from HTML")
+                    return [token]
+                else:
+                    logger.error("Could not find token in the HTML response")
+                    return ["Error: Could not find token in the response"]
                 
             except requests.exceptions.RequestException as e:
                 error_msg = f"Request failed: {str(e)}"
