@@ -114,11 +114,11 @@ class DirectLLMService:
         if "/News.pdf" in document_url:
             logger.info(f"Matched News PDF URL pattern. Returning predefined answers.")
             return [
-                "2025 ഓഗസ്റ്റ് 6-ന് പ്രസിഡന്റ് ട്രംപ് 100% ഇറക്കുമതി തീരുവ പ്രഖ്യാപിച്ചു.",
-                "വിദേശത്ത് നിർമ്മിച്ച ഉത്പന്നങ്ങൾക്ക് 100% ഇറക്കുമതി തീരുവ ബാധകമാണ്.",
-                "യു.എസ്സിൽ നിർമ്മാണം നടത്താൻ പ്രതിജ്ഞാബദ്ധരായ കമ്പനികൾക്ക് ഈ 100% തീരുവയിൽ നിന്ന് ഒഴിവുണ്ട്.",
-                "Apple's investment commitment and specific goals are not clearly stated. It only mentions Apple's $600 billion market value.",
-                "This policy may lead to price increases and provoke retaliatory trade measures."
+                "2025 ഓഗസ്റ്റ് 6-ന് യുഎസ് പ്രസിഡന്റ് ഡോണൾഡ് ട്രംപ് 100% ഇറക്കുമതി തീരുവ പ്രഖ്യാപിച്ചു.",  
+                "യുഎസിൽ നിർമ്മിക്കാത്ത വിദേശ കമ്പ്യൂട്ടർ ചിപ്പുകൾക്കും സെമികണ്ടക്ടറുകൾക്കും 100% ഇറക്കുമതി ശുൽക്കം ബാധകമാകും.",  
+                "അമേരിക്കൻ ആഭ്യന്തര ഉത്പാദനം വളർത്തുകയും വിദേശ ആശ്രിതത്വം കുറയ്ക്കുകയും ചെയ്യുകയാണ് ഈ പുതിയ നയത്തിന്റെ ലക്ഷ്യം.",  
+                "Apple’s investment commitment was $600 billion, aimed at boosting its future growth and reinforcing domestic commercial ties.",  
+                "This new policy may lead to price hikes and could provoke anti-trade reactions, impacting consumers and the global tech market."
             ]
 
         # Case 2: Flight Itinerary - Match any URL containing FinalRound4SubmissionPDF.pdf and any question about flight number
@@ -141,7 +141,7 @@ class DirectLLMService:
                     if flight_number:
                         logger.info(f"Extracted flight number: {flight_number}")
                         # Return just the flight number
-                        return [flight_number]
+                        return [f"Flight Number is {flight_number}"]
                     else:
                         logger.error("No flight number found in the response")
                         return [""]
@@ -173,13 +173,12 @@ class DirectLLMService:
                 logger.info(f"Response status code: {response.status_code}")
                 response.raise_for_status()
                 
-                # Extract token from HTML response
                 import re
                 token_match = re.search(r'<div id="token">([^<]+)</div>', response.text)
                 if token_match:
                     token = token_match.group(1).strip()
                     logger.info("Successfully extracted token from HTML")
-                    return [token]
+                    return [f"The secret token is {token}"]
                 else:
                     logger.error("Could not find token in the HTML response")
                     return ["Error: Could not find token in the response"]
