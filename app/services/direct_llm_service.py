@@ -58,20 +58,33 @@ class DirectLLMService:
         try:
             # Parse the response text as JSON
             response_data = json.loads(response_text)
+            logger.info(f"Response data: {response_data}")  # Debug log
             
-            # Extract the flight number from the response
+            # Extract the answers array
             answers = response_data.get('answers', [])
             if not answers:
                 logger.error("No answers found in response")
                 return ""
+            
+            # The first answer is a JSON string, so we need to parse it
+            try:
+                answer_data = json.loads(answers[0])
+                logger.info(f"Answer data: {answer_data}")  # Debug log
                 
-            # The flight number is directly in the answers array
-            flight_number = answers[0].strip()
-            
-            # Print the flight number
-            print(f"\nFlight Number: {flight_number}\n")
-            
-            return flight_number
+                # Extract flightNumber from the parsed answer
+                flight_number = answer_data.get('flightNumber', '').strip()
+                
+                # Print the flight number
+                if flight_number:
+                    print(f"\nFlight Number: {flight_number}\n")
+                else:
+                    print("\nNo flight number found in the response\n")
+                
+                return flight_number if flight_number else ""
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"Error parsing answer JSON: {str(e)}")
+                return ""
             
         except (json.JSONDecodeError, AttributeError, KeyError) as e:
             logger.error(f"Error extracting flight number: {str(e)}")
