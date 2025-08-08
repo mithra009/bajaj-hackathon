@@ -1009,6 +1009,42 @@ class LLMService:
                         response = await self._call_llm_batch(prompt, api_key)
                         return self._parse_batch_response(response, list(range(1, len(queries) + 1)))
                     
+                    # Fallback to Gemini upload if local extraction fails
+                    return await self._process_file_with_gemini(queries, file_bytes, file_type, api_key)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing PDF: {e}", exc_info=True)
+                    return {str(i+1): f"Error processing PDF: {str(e)[:200]}" for i in range(len(queries))}
+            
+            # For unknown file types, try direct processing
+            else:
+                logger.info("Processing as unknown file with direct processing...")
+                try:
+                    # Download the file first
+                    file_bytes = await asyncio.to_thread(self._download_file, url)
+                    if not file_bytes:
+                        return {str(i+1): "Error: No content could be retrieved from the URL" for i in range(len(queries))}
+                    
+                    # Try processing with Gemini
+                    return await self._process_file_with_gemini(queries, file_bytes, file_type, api_key)
+                        
+                except Exception as e:
+                    logger.error(f"Error processing unknown file: {e}", exc_info=True)
+                    return {str(i+1): f"Error processing file: {str(e)[:200]}" for i in range(len(queries))}
+                try:
+                    file_bytes = await asyncio.to_thread(self._download_file, url)
+                    # First try local text extraction
+                    doc = fitz.open(stream=file_bytes, filetype="pdf")
+                    extracted_text = ""
+                    for page in doc:
+                        extracted_text += page.get_text() + "\n"
+                    doc.close()
+                    
+                    if extracted_text.strip():
+                        prompt = self._prepare_text_analysis_prompt(queries, extracted_text, file_type)
+                        response = await self._call_llm_batch(prompt, api_key)
+                        return self._parse_batch_response(response, list(range(1, len(queries) + 1)))
+                    
                     # If no text was extracted, fall through to Gemini upload
                     logger.info("No text extracted from PDF, trying Gemini upload...")
                     
