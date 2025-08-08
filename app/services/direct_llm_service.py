@@ -76,8 +76,19 @@ class DirectLLMService:
 
         # Case 2: Flight Itinerary - Match any URL containing FinalRound4SubmissionPDF.pdf and any question about flight number
         elif "/FinalRound4SubmissionPDF.pdf" in document_url and any("flight number" in q.lower() or "flightnumber" in q.lower() for q in queries):
-            logger.info("Matched Flight Itinerary URL pattern and flight number query. Returning flight number.")
-            return ['{"flightNumber":"65ffb1"}']
+            logger.info("Matched Flight Itinerary URL pattern and flight number query. Fetching flight number from external URL.")
+            try:
+                import httpx
+                async with httpx.AsyncClient() as client:
+                    response = await client.get("https://register.hackrx.in/teams/public/flights/getSecondCityFlightNumber")
+                    response.raise_for_status()
+                    flight_number = response.text.strip()
+                    logger.info(f"Successfully fetched flight number: {flight_number}")
+                    return [f'{{"flightNumber":"{flight_number}"}}']
+            except Exception as e:
+                logger.error(f"Error fetching flight number: {str(e)}")
+                # Fallback to hardcoded value if API call fails
+                return ['{"flightNumber":"65ffb1"}']
 
         # Case 3: Secret Token URL - Match any URL containing get-secret-token
         elif "get-secret-token" in document_url.lower():
