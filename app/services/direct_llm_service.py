@@ -59,10 +59,14 @@ class DirectLLMService:
             # Parse the response text as JSON
             response_data = json.loads(response_text)
             
-            # Extract the flight number from the nested JSON structure
-            flight_data = json.loads(response_data.get('answers', [''])[0])
-            flight_info = json.loads(flight_data.get('flightNumber', '{}'))
-            flight_number = flight_info.get('data', {}).get('flightNumber', '')
+            # Extract the flight number from the response
+            answers = response_data.get('answers', [])
+            if not answers:
+                logger.error("No answers found in response")
+                return ""
+                
+            # The flight number is directly in the answers array
+            flight_number = answers[0].strip()
             
             # Print the flight number
             print(f"\nFlight Number: {flight_number}\n")
