@@ -52,41 +52,63 @@ class DirectLLMService:
         """
         try:
             logger.info(f"Processing document URL: {document_url}")
+            logger.info(f"Number of queries: {len(queries)}")
             
             # Get API key and configure Gemini
             api_key = self._get_next_api_key()
+            logger.info(f"Using API key: {api_key[:5]}...{api_key[-5:]}")
             genai.configure(api_key=api_key)
             
             # Initialize the model
             model = genai.GenerativeModel(self.model_name)
+            logger.info(f"Initialized model: {self.model_name}")
             
             # Process each query
             results = {}
             for i, query in enumerate(queries, 1):
                 try:
+                    logger.info(f"Processing query {i}: {query}")
+                    
                     # Create the system prompt with the URL
                     system_prompt = (
                         "You are a helpful assistant that answers questions based on the provided document. "
                         f"The document can be accessed at this URL: {document_url}\n"
                         "Please analyze the content at this URL and answer the following question. "
+                        "If the answer cannot be found in the document, say 'Not found in document'.\n\n"
                         f"Question: {query}\nAnswer:"
                     )
                     
+                    logger.debug(f"System prompt: {system_prompt}")
+                    
                     # Generate response
+                    logger.info("Sending request to Gemini...")
                     response = await model.generate_content_async(system_prompt)
                     
+                    # Log the raw response
+                    logger.info(f"Received response from Gemini: {response}")
+                    
+                    # Extract text from response
+                    response_text = response.text if hasattr(response, 'text') else str(response)
+                    logger.info(f"Extracted response text: {response_text[:200]}..." if len(response_text) > 200 else f"Extracted response text: {response_text}")
+                    
                     # Store the result
-                    results[str(i)] = response.text.strip()
+                    results[str(i)] = response_text.strip()
                     
                 except Exception as e:
-                    logger.error(f"Error processing query {i}: {e}")
-                    results[str(i)] = f"Error processing query: {str(e)[:200]}"
+                    error_msg = f"Error processing query {i}: {str(e)}"
+                    logger.error(error_msg, exc_info=True)
+                    results[str(i)] = error_msg[:200]
+                    
+                logger.info(f"Results so far: {results}")
             
-            return {"answers": [results.get(str(i+1), "No response generated") for i in range(len(queries))]}
+            # Convert results to the expected format
+            answers = [results.get(str(i+1), "No response generated") for i in range(len(queries))]
+            logger.info(f"Returning answers: {answers}")
+            return answers
             
         except Exception as e:
-            logger.error(f"Error in process_queries: {e}")
-            return {"answers": [f"Error: {str(e)[:200]}" for _ in queries]}
+            logger.error(f"Error in process_queries: {e}", exc_info=True)
+            return [f"Error: {str(e)[:200]}" for _ in queries]
 
 # Create a singleton instance for the application
 direct_llm_service = DirectLLMService()

@@ -139,14 +139,25 @@ async def query_document(
     
     try:
         # Process queries using the direct LLM service
-        results_dict = await direct_llm_service.process_queries(
+        logger.info(f"Sending request to direct_llm_service with document: {query_data.documents}")
+        logger.info(f"Questions: {query_data.questions}")
+        
+        # Get the answers directly from the direct LLM service
+        answers = await direct_llm_service.process_queries(
             document_url=str(query_data.documents),
             queries=query_data.questions
         )
         
-        # Extract answers (they're already in order in the response)
-        answers = [results_dict.get(str(i+1), "No response generated") 
-                  for i in range(len(query_data.questions))]
+        logger.info(f"Answers from direct_llm_service: {answers}")
+        
+        # Ensure we have the correct number of answers
+        if len(answers) != len(query_data.questions):
+            logger.warning(f"Number of answers ({len(answers)}) doesn't match number of questions ({len(query_data.questions)})")
+            # Pad or truncate answers to match the number of questions
+            if len(answers) < len(query_data.questions):
+                answers = answers + ["No response generated"] * (len(query_data.questions) - len(answers))
+            else:
+                answers = answers[:len(query_data.questions)]
         
         # Prepare the final response object
         response_data = QueryResponse(answers=answers)
