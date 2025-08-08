@@ -131,11 +131,20 @@ class DirectLLMService:
                     response = await client.get("https://register.hackrx.in/teams/public/flights/getSecondCityFlightNumber")
                     response.raise_for_status()
                     
-                    # Log the complete response for debugging
-                    logger.info(f"Flight API response: {response.text}")
+                    # Parse the JSON response
+                    flight_data = response.json()
+                    logger.info(f"Flight API response: {flight_data}")
                     
-                    # Return the complete response as is
-                    return [response.text]
+                    # Extract the flight number
+                    flight_number = flight_data.get('data', {}).get('flightNumber', '')
+                    
+                    if flight_number:
+                        logger.info(f"Extracted flight number: {flight_number}")
+                        # Return just the flight number
+                        return [flight_number]
+                    else:
+                        logger.error("No flight number found in the response")
+                        return [""]
                     
             except Exception as e:
                 logger.error(f"Error fetching flight number: {str(e)}")
