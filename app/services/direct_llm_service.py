@@ -99,16 +99,39 @@ class DirectLLMService:
                 if not parsed_url.scheme:
                     document_url = "https://" + document_url
                 
-                # Make the request to get the token
-                response = requests.get(document_url, timeout=10)
+                logger.info(f"Making request to: {document_url}")
+                
+                # Make the request to get the token with headers to mimic a browser
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                }
+                
+                response = requests.get(document_url, headers=headers, timeout=30, verify=True)
+                logger.info(f"Response status code: {response.status_code}")
                 response.raise_for_status()
                 
-                # Return the response content as the token
-                return [response.text.strip()]
+                token = response.text.strip()
+                if not token:
+                    logger.error("Received empty response from the URL")
+                    return ["Error: Received empty token from the provided URL"]
                 
+                logger.info("Successfully retrieved token")
+                return [token]
+                
+            except requests.exceptions.RequestException as e:
+                error_msg = f"Request failed: {str(e)}"
+                if hasattr(e, 'response') and e.response is not None:
+                    error_msg += f"\nStatus code: {e.response.status_code}"
+                    try:
+                        error_msg += f"\nResponse: {e.response.text[:500]}"
+                    except:
+                        pass
+                logger.error(error_msg, exc_info=True)
+                return [f"Error: Could not retrieve token from the provided URL. Details: {str(e)}"]
             except Exception as e:
-                logger.error(f"Error fetching token from URL: {str(e)}", exc_info=True)
-                return ["Error: Could not retrieve token from the provided URL"]
+                error_msg = f"Unexpected error: {str(e)}"
+                logger.error(error_msg, exc_info=True)
+                return [f"Error: An unexpected error occurred while processing the request: {str(e)}"]
 
         # --- Default LLM Fallback Section ---
         
