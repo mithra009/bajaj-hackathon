@@ -7,6 +7,7 @@ import asyncio
 import google.generativeai as genai
 from typing import List, Dict, Any, Optional
 import logging
+import requests
 from urllib.parse import urlparse
 
 # Configure logging
