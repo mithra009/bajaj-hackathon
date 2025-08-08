@@ -61,8 +61,11 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) 
         )
     return credentials.credentials
 
-# Import services after app creation
-from app.services import llm_service, query_logger
+# Import DirectLLMService
+from app.services.direct_llm_service import DirectLLMService
+
+# Initialize the DirectLLMService
+direct_llm_service = DirectLLMService()
 
 # Add CORS middleware
 app.add_middleware(
@@ -218,8 +221,8 @@ async def root():
         "documentation": "Add /docs to the URL for interactive API documentation"
     }
 
-@app.get("/health", include_in_schema=False)
-async def health_check() -> Dict[str, str]:
+@app.get("/health", response_model=Dict[str, str])
+async def health_check():
     """
     Health check endpoint for load balancers and monitoring.
     
@@ -227,14 +230,53 @@ async def health_check() -> Dict[str, str]:
         Dict with status and timestamp
     """
     try:
-        # Basic health check - verify we can import and initialize the LLM service
-        from app.services.llm_service import llm_service
         return {
             "status": "healthy",
             "timestamp": datetime.utcnow().isoformat(),
             "service": "document-query-api",
             "version": "1.0.0"
         }
+    except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service is not healthy"
+        )
+
+class DirectQueryRequest(BaseModel):
+    """Request model for direct LLM queries."""
+    documents: str  # Document URL as string
+    questions: List[str]  # List of questions
+
+@app.post("/hackrx/direct", response_model=Dict[str, Any])
+async def process_direct_queries(
+    request: Request, 
+    query_request: DirectQueryRequest,
+    _: str = Depends(verify_token)
+):
+    """
+    Process queries by directly passing the URL to Gemini.
+    
+    Args:
+        request: The FastAPI request object
+        query_request: The query request containing document URL and questions
+        
+    Returns:
+        Dictionary containing the answers to the queries
+    """
+    try:
+        # Process the queries using the direct LLM service
+        results = await direct_llm_service.process_queries(
+            document_url=query_request.documents,
+            queries=query_request.questions
+        )
+        
+        # Convert the results to the expected format
+        answers = [results.get(str(i+1), "No response generated") 
+                  for i in range(len(query_request.questions))]
+        
+        return {"answers": answers}
+        
     except Exception as e:
         logger.error(f"Health check failed: {str(e)}")
         raise HTTPException(
