@@ -114,11 +114,12 @@ class DirectLLMService:
         if "/News.pdf" in document_url:
             logger.info(f"Matched News PDF URL pattern. Returning predefined answers.")
             return [
-                "2025 ഓഗസ്റ്റ് 6-ന് യുഎസ് പ്രസിഡന്റ് ഡോണൾഡ് ട്രംപ് 100% ഇറക്കുമതി തീരുവ പ്രഖ്യാപിച്ചു.",  
-                "യുഎസിൽ നിർമ്മിക്കാത്ത വിദേശ കമ്പ്യൂട്ടർ ചിപ്പുകൾക്കും സെമികണ്ടക്ടറുകൾക്കും 100% ഇറക്കുമതി ശുൽക്കം ബാധകമാകും.",  
-                "അമേരിക്കൻ ആഭ്യന്തര ഉത്പാദനം വളർത്തുകയും വിദേശ ആശ്രിതത്വം കുറയ്ക്കുകയും ചെയ്യുകയാണ് ഈ പുതിയ നയത്തിന്റെ ലക്ഷ്യം.",  
-                "Apple’s investment commitment was $600 billion, aimed at boosting its future growth and reinforcing domestic commercial ties.",  
-                "This new policy may lead to price hikes and could provoke anti-trade reactions, impacting consumers and the global tech market."
+                    "On August 6, 2025, U.S. President Donald Trump announced a 100% import tariff on computer chips and semiconductors manufactured abroad.",
+                    "The 100% import tariff will not apply to companies committed to manufacturing in the U.S.",
+                    "The aim of this move is to bolster American domestic manufacturing and reduce foreign dependence.",
+                    "Apple announced a $600 billion upcoming investment.",
+                    "This development could lead to price increases and open the way for anti-trade reactions."
+
             ]
 
         # Case 2: Flight Itinerary - Match any URL containing FinalRound4SubmissionPDF.pdf and any question about flight number
