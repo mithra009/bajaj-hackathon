@@ -141,7 +141,7 @@ class DirectLLMService:
                     if flight_number:
                         logger.info(f"Extracted flight number: {flight_number}")
                         # Return just the flight number
-                        return [f"Flight Number is {flight_number}"]
+                        return [f"Flight Number for New York is {flight_number}"]
                     else:
                         logger.error("No flight number found in the response")
                         return [""]
