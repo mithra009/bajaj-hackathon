@@ -128,7 +128,7 @@ class DirectLLMService:
                 import httpx
                 async with httpx.AsyncClient() as client:
                     # First, get the complete flight info
-                    response = await client.get("https://register.hackrx.in/teams/public/flights/getFifthCityFlightNumber")
+                    response = await client.get("https://register.hackrx.in/teams/public/flights/getThirdCityFlightNumber")
                     response.raise_for_status()
                     
                     # Parse the JSON response
