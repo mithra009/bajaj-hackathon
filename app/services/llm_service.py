@@ -446,8 +446,8 @@ class LLMService:
             # Get the file bytes (no separate upload step needed)
             file_data = await self._upload_to_gemini(file_bytes, mime_type, api_key)
             
-            # Prepare prompt
-            prompt = self._prepare_file_analysis_prompt(queries)
+            # Prepare prompt with file type information
+            prompt = self._prepare_file_analysis_prompt(queries, file_type)
             
             # Configure Gemini
             genai.configure(api_key=api_key)
@@ -467,8 +467,18 @@ class LLMService:
                 }
             )
             
-            # For image and Excel files, use the bytes directly
-            if file_type in ['image', 'excel']:
+            # For Excel files, extract text first for better processing
+            if file_type == 'excel':
+                try:
+                    # First try to process the Excel file directly
+                    response = await model.generate_content_async([file_data, prompt])
+                except Exception as e:
+                    logger.warning(f"Direct Excel processing failed, falling back to text extraction: {e}")
+                    # If direct processing fails, extract text and try again
+                    extracted_text = self._extract_text_from_excel(file_bytes)
+                    response = await model.generate_content_async([f"Excel content:\n{extracted_text}\n\n{prompt}"])
+            # For images, use the bytes directly
+            elif file_type == 'image':
                 response = await model.generate_content_async([file_data, prompt])
             else:
                 # For other file types, convert to text first
@@ -525,44 +535,59 @@ class LLMService:
             logger.error(f"Error processing text-based file: {e}")
             raise Exception(f"Text extraction failed: {e}")
 
-    def _prepare_file_analysis_prompt(self, queries: List[str]) -> str:
+    def _prepare_file_analysis_prompt(self, queries: List[str], file_type: str = None) -> str:
         """Prepare prompt for file analysis with Gemini upload."""
-        prompt_parts = [
-            "You are an expert health insurance policy analyst. Your task is to carefully analyze the provided policy document and answer the following questions.",
-            "",
-            "DOCUMENT TYPE: This is a health insurance policy document that may be in PowerPoint format. Pay special attention to:",
-            "- All slides and their content (titles, bullet points, tables, charts)",
-            "- Speaker notes and slide notes (often contain important details)",
-            "- Fine print, footnotes, and disclaimers",
-            "- Any appendices, reference slides, or additional materials",
-            "- Policy numbers, coverage details, terms and conditions",
-            "",
-            "INSTRUCTIONS:",
-            "1. Read and analyze the ENTIRE document carefully before answering any questions.",
-            "2. For each question, provide a comprehensive response (200-300 characters) with specific references.",
-            "3. Include slide numbers, section headers, or specific locations where the information was found.",
-            "4. For numerical values (limits, sub-limits, waiting periods), provide exact figures from the document.",
-            "5. If a question has multiple parts, address each part clearly in your response.",
-            "6. For coverage details, be specific about what is included and any exclusions.",
-            "7. If you're unsure about an answer, provide the most relevant information you can find.",
-            "",
-            "EXAMPLE QUERIES AND ANSWERS:",
-            "Question: What types of hospitalization expenses are covered, and what are the limits for room and room expenses?",
-            "Answer: Covers medical expenses including room rent up to ₹5,000/day and ICU charges up to ₹10,000/day. (Slide 5)",
-            "",
-            "Question: What is domiciliary hospitalization, and what are its key exclusions?",
-            "Answer: Domiciliary hospitalization is home treatment due to unavailability of hospital beds or patient condition, excluding treatments like asthma, bronchitis, epilepsy, etc. (Slide 7)",
-            "",
-            "Question: What are the benefits and limits of telemedicine and maternity coverage under this policy?",
-            "Answer: Telemedicine is covered up to ₹2,000 per policy year; maternity coverage is not included. (Slide 9)",
-            "",
-            "Question: What specialized treatments are covered, and what are their sub-limits?",
-            "Answer: Covers specialized treatments like robotic surgeries and stem cell therapy with sub-limits (e.g., ₹1,00,000 for deep brain stimulation). (Slide 11)",
-            "",
-            "Question: What are the waiting periods for pre-existing diseases and specified diseases or procedures?",
-            "Answer: 48 months for pre-existing diseases and 24 months for specified conditions like cataract, hernia, etc. (Slide 13)"
-            "",
-            "QUESTIONS:"
+        if file_type == 'excel':
+            prompt_parts = [
+                "You are an expert data analyst. Your task is to carefully analyze the provided Excel spreadsheet and answer the following questions based on the data.",
+                "",
+                "DOCUMENT TYPE: This is an Excel spreadsheet containing tabular data. Pay special attention to:",
+                "- All sheets and their content (headers, data rows, formulas, and values)",
+                "- Column headers and their meanings",
+                "- Numerical data, dates, and text fields",
+                "- Any summary tables or calculated fields",
+                "",
+                "INSTRUCTIONS:",
+                "1. Analyze ALL sheets and their content before answering any questions.",
+                "2. For each question, provide a precise response based on the data in the spreadsheet.",
+                "3. Reference specific sheet names and cell ranges (e.g., 'Sheet1!A1:B10') where you found the information.",
+                "4. For numerical values, provide exact figures from the data.",
+                "5. If a question has multiple parts, address each part clearly in your response.",
+                "6. If you need to perform calculations, show your work or explain your reasoning.",
+                "7. If the exact information isn't available, provide the closest match or state that the data is not available.",
+                "",
+                "EXAMPLE QUERIES AND ANSWERS:",
+                "Question: What is the phone number of John Doe?",
+                "Answer: The phone number of John Doe is 123-456-7890 (Sheet1!C5).",
+                "",
+                "Question: What is the total sales for Q1?",
+                "Answer: The total sales for Q1 is $45,200 (Sheet2!B10).",
+                "",
+                "Question: Who has the highest salary in the company?",
+                "Answer: Jane Smith has the highest salary of $120,000 (Sheet1!D7).",
+                "",
+                "QUESTIONS:"
+            ]
+        else:
+            prompt_parts = [
+                "You are an expert document analyst. Your task is to carefully analyze the provided document and answer the following questions.",
+                "",
+                "DOCUMENT TYPE: This is a document that may contain various types of content. Pay special attention to:",
+                "- All text, tables, and data",
+                "- Headers, sections, and their organization",
+                "- Numerical data and important details",
+                "- Any footnotes or references",
+                "",
+                "INSTRUCTIONS:",
+                "1. Read and analyze the ENTIRE document carefully before answering any questions.",
+                "2. For each question, provide a comprehensive response with specific references.",
+                "3. Include section headers, page numbers, or specific locations where the information was found.",
+                "4. For numerical values, provide exact figures from the document.",
+                "5. If a question has multiple parts, address each part clearly in your response.",
+                "6. If you're unsure about an answer, provide the most relevant information you can find.",
+                "",
+                "QUESTIONS:"
+            ]
         ]
         
         for i, query in enumerate(queries, 1):
