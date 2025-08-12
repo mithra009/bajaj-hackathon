@@ -420,6 +420,102 @@ class LLMService:
             logger.error(f"Error extracting ZIP contents: {e}")
             raise Exception(f"Failed to extract ZIP contents: {e}")
 
+    async def _process_image_with_gemini(self, queries: List[str], image_bytes: bytes, api_key: str) -> List[str]:
+        """Process image using Gemini's image upload capability."""
+        try:
+            logger.info("Processing image with Gemini upload...")
+            
+            # Prepare prompt with specific instructions for image analysis
+            prompt_parts = [
+                "You are an expert image analyst. Your task is to carefully analyze the provided image and answer the following questions.",
+                "",
+                "IMAGE ANALYSIS INSTRUCTIONS:",
+                "1. Examine the entire image carefully, including all objects, text, and symbols.",
+                "2. Identify the main subject(s) of the image and their context.",
+                "3. Look for any text, logos, or branding within the image.",
+                "4. Note any relevant colors, shapes, or patterns.",
+                "5. Consider the overall composition and layout of the image.",
+                "",
+                "QUESTIONS:"
+            ]
+            
+            for i, query in enumerate(queries, 1):
+                prompt_parts.append(f"{i}. {query}")
+            
+            prompt_parts.extend([
+                "",
+                "=== RESPONSE FORMAT ===",
+                "For each question, provide your answer in the format:",
+                "ANSWER_[NUMBER]: [your answer]",
+                "",
+                "If you cannot answer a question based on the image, respond with:",
+                "ANSWER_[NUMBER]: [Information not found in the image]"
+            ])
+            
+            prompt = "\n".join(prompt_parts)
+            
+            # Initialize the model
+            model = genai.GenerativeModel("gemini-pro-vision")
+            
+            try:
+                # Process the image with Gemini
+                response = await model.generate_content_async(
+                    [prompt, {"mime_type": "image/jpeg", "data": image_bytes}],
+                    generation_config={
+                        "temperature": 0.1,
+                        "max_output_tokens": 4096,
+                        "top_p": 0.9,
+                        "top_k": 30
+                    },
+                    safety_settings={
+                        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                    }
+                )
+                
+                if not response.text:
+                    raise ValueError("Empty response from Gemini API")
+                
+                logger.info(f"Gemini response: {response.text[:200]}...")  # Log first 200 chars
+                
+                # Parse the response to extract answers
+                answers = []
+                for i in range(1, len(queries) + 1):
+                    # Look for ANSWER_X: pattern
+                    pattern = f"ANSWER_{i}:(.*?)(?=ANSWER_{i+1}:|\Z)"
+                    match = re.search(pattern, response.text, re.DOTALL | re.IGNORECASE)
+                    
+                    if match:
+                        answer = match.group(1).strip()
+                        # Clean up the answer
+                        answer = re.sub(r'^[^a-zA-Z0-9\-\s]*', '', answer)  # Remove leading special chars
+                        answer = re.sub(r'\s+', ' ', answer).strip()  # Normalize whitespace
+                        answers.append(answer)
+                    else:
+                        # If pattern not found, try to find any answer-like text
+                        answers.append("Could not extract a clear answer from the response.")
+                
+                if len(answers) != len(queries):
+                    logger.warning(f"Mismatch in number of answers ({len(answers)}) and questions ({len(queries)})")
+                    # If we got fewer answers than questions, pad with empty strings
+                    answers.extend([""] * (len(queries) - len(answers)))
+                
+                return answers
+                
+            except asyncio.TimeoutError:
+                logger.error("Gemini API call timed out")
+                return ["Processing timed out. The response took too long."] * len(queries)
+                
+            except Exception as e:
+                logger.error(f"Error in Gemini API call: {str(e)}")
+                return [f"Error processing image: {str(e)[:200]}"] * len(queries)
+            
+        except Exception as e:
+            logger.error(f"Error in image processing: {str(e)}", exc_info=True)
+            return [f"Error processing image: {str(e)[:200]}"] * len(queries)
+
     async def _process_file_with_gemini(self, queries: List[str], file_bytes: bytes, 
                                       file_type: str, api_key: str) -> Dict[str, str]:
         """Process file using Gemini's file upload capability with enhanced Excel handling."""
@@ -643,28 +739,44 @@ class LLMService:
     async def _process_image_with_gemini(self, image_url: str, queries: List[str]) -> List[str]:
         """Process image using Gemini's vision capabilities with detailed instructions for table reading."""
         try:
+            # Get API key with rotation
+            key_index = get_next_key_index(len(self.gemini_api_keys))
+            api_key = self.gemini_api_keys[key_index]
+            genai.configure(api_key=api_key)
+            
+            # Download the image
+            image_content = await asyncio.get_event_loop().run_in_executor(
+                self.executor,
+                lambda: requests.get(image_url).content
+            )
+            
             # Prepare the detailed prompt with explicit instructions for reading tables
             prompt_parts = [
-                "You are an expert at reading and interpreting tables from images. Your task is to carefully analyze the table in the image and answer the following questions based SOLELY on the visible data.",
+                "You are an expert at reading and interpreting tables from images. Your task is to carefully analyze the table in the image and answer the following questions based on the visible data.",
                 "",
-                "CRITICAL INSTRUCTIONS:",
-                "1. Carefully examine the ENTIRE table, including all headers, rows, and columns.",
+                "=== CRITICAL INSTRUCTIONS ===",
+                "1. Examine the ENTIRE table, including all headers, rows, and columns.",
                 "2. For each question, provide the answer based ONLY on the data visible in the table.",
                 "3. If the table contains the information but you're uncertain about the exact value, make your best attempt to read it.",
                 "4. For numerical values, provide the exact numbers as they appear in the table.",
                 "5. If a question is about a specific sum insured amount, find the corresponding row in the table.",
                 "6. For questions about daily limits or coverage, look for the relevant column in the table.",
                 "7. Format your response as: ANSWER_[NUMBER]: [your answer] with each answer on a new line.",
-                "8. DO NOT say the table doesn't contain the information if you can see relevant data - make your best effort to answer.",
-                "9.If the image contributes the content to answer only few queries, answer them in that context, and the remaining answer from your knowledge strictly, do not mention fie doesnot contain information",
+                "8. If you can see relevant data, DO NOT say the table doesn't contain the information.",
+                "9. If the image doesn't fully answer a question, use your knowledge to provide the best possible answer.",
                 "",
-                "IMPORTANT: The table appears to have the following structure:",
-                "- First column: Sum Insured amounts (like 4 Lakhs, 8 Lakhs, etc.)",
-                "- Other columns: Different types of coverage/limits (like Room, Boarding, Nursing, ICU, etc.)",
+                "=== TABLE STRUCTURE ===",
+                "The table appears to have the following structure:",
+                "- First column: Sum Insured amounts (e.g., 4 Lakhs, 8 Lakhs)",
+                "- Other columns: Different types of coverage/limits (e.g., Room, Boarding, Nursing, ICU)",
                 "- Rows represent different sum insured amounts",
                 "- Cells contain the coverage/limit amounts",
                 "",
-                "QUESTIONS:"
+                "=== EXAMPLE ===",
+                "Question: What is the room rent limit for 5 Lakhs sum insured?",
+                "You would find the row for 5 Lakhs, then look under the 'Room' column.",
+                "",
+                "=== QUESTIONS ==="
             ]
             
             # Add each question with a number
