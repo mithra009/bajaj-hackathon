@@ -971,7 +971,15 @@ class LLMService:
             raise Exception(error_msg) from e
 
     def _parse_batch_response(self, response_text: str, query_numbers: List[int]) -> Dict[str, str]:
-        """Parse the batch response to extract individual answers with enhanced handling for different formats."""
+        """Parse the batch response to extract individual answers with enhanced handling for different formats.
+        
+        Args:
+            response_text: The raw text response from the LLM
+            query_numbers: List of query numbers we expect answers for
+            
+        Returns:
+            Dictionary mapping question numbers to their answers
+        """
         answers = {str(num): "" for num in query_numbers}  # Initialize with empty answers
         
         if not response_text or not response_text.strip():
@@ -979,69 +987,79 @@ class LLMService:
             return answers
             
         try:
-            # Handle case where response is already in the format we want (list of ANSWER_X: value)
-            if isinstance(response_text, str) and 'ANSWER_' in response_text:
-                # Split by newlines to handle each answer separately
-                answer_lines = [line.strip() for line in response_text.split('\n') if line.strip()]
+            # First, try to parse as a JSON array (direct answer format)
+            try:
+                if response_text.strip().startswith('[') and response_text.strip().endswith(']'):
+                    parsed_answers = json.loads(response_text)
+                    if isinstance(parsed_answers, list) and len(parsed_answers) == len(query_numbers):
+                        for i, answer in enumerate(parsed_answers):
+                            if i < len(query_numbers):
+                                answers[str(query_numbers[i])] = str(answer).strip()
+                        return answers
+            except json.JSONDecodeError:
+                pass  # Not a JSON array, continue with other formats
                 
-                for line in answer_lines:
-                    # Try to match ANSWER_X: value
-                    match = re.match(r'ANSWER[_\s]*(\d+)[:\s]*(.+)', line, re.IGNORECASE)
-                    if match:
-                        num = match.group(1).strip()
-                        answer = match.group(2).strip()
-                        if num.isdigit() and int(num) in query_numbers:
-                            answers[num] = answer
+            # Handle case where response is in the format of ANSWER_X: value
+            answer_patterns = [
+                # Format: ANSWER_X: answer
+                (r'ANSWER[\s_]*(\d+)[\s:]+([\s\S]*?)(?=\s*(?:ANSWER|$))', 2),
+                # Format: X. answer
+                (r'(?:^|\n)\s*(\d+)[\.\)]\s+([^\n]*)', 2),
+                # Format: ["answer1", "answer2", ...]
+                (r'\[(.*?)\]', 1)
+            ]
             
-            # If we didn't find any answers yet, try more patterns
-            if not any(answers.values()):
-                # Try to split by ANSWER_X patterns in the text
-                answer_pattern = re.compile(r'ANSWER[_\s]*(\d+)[:\s]*(.+?)(?=\s*ANSWER|$)', 
-                                         re.IGNORECASE | re.DOTALL)
-                
-                matches = list(answer_pattern.finditer(response_text))
-                
+            for pattern, group in answer_patterns:
+                if any(answers.values()):  # Stop if we've found answers
+                    break
+                    
+                matches = list(re.finditer(pattern, response_text, re.IGNORECASE | re.DOTALL))
                 if matches:
-                    logger.info(f"Found {len(matches)} explicit answer patterns in response")
+                    logger.info(f"Found {len(matches)} matches with pattern: {pattern}")
                     for match in matches:
-                        num = match.group(1).strip()
-                        answer = match.group(2).strip()
-                        if num.isdigit() and int(num) in query_numbers:
-                            answers[num] = answer
+                        try:
+                            if group == 1:  # For array format
+                                # Try to parse as a JSON array
+                                try:
+                                    answer_list = json.loads(f'[{match.group(1)}]')
+                                    if isinstance(answer_list, list):
+                                        for i, ans in enumerate(answer_list):
+                                            if i < len(query_numbers):
+                                                answers[str(query_numbers[i])] = str(ans).strip('"\' ')
+                                        break  # Successfully parsed as array
+                                except json.JSONDecodeError:
+                                    continue
+                            else:  # For numbered answers
+                                num = match.group(1).strip()
+                                answer = match.group(2).strip()
+                                if num.isdigit() and int(num) in query_numbers:
+                                    answers[num] = answer
+                        except (IndexError, AttributeError) as e:
+                            logger.warning(f"Error parsing match {match.group(0)}: {e}")
+                            continue
             
-            # If we still don't have answers, try to split by numbered items
+            # If we still don't have answers, try to extract by position
             if not any(answers.values()):
-                logger.info("No explicit answer patterns found, trying numbered items")
-                # Look for patterns like "1. " or "1) "
-                item_pattern = re.compile(r'(?:^|\n)\s*(\d+)[\.\)]\s+(.+?)(?=\n\s*\d+[\.\)]|$)', 
-                                        re.DOTALL)
-                matches = item_pattern.finditer(response_text)
-                
-                for i, match in enumerate(matches):
-                    num = match.group(1)
-                    answer = match.group(2).strip()
-                    if num.isdigit() and int(num) in query_numbers:
-                        answers[num] = answer
+                logger.info("No structured answers found, trying to extract by position")
+                # Split response by common separators
+                potential_answers = re.split(r'\n\s*\n|\|', response_text)
+                for i, ans in enumerate(potential_answers):
+                    if i < len(query_numbers):
+                        num = str(query_numbers[i])
+                        answers[num] = ans.strip()
             
-            # Clean up answers - remove any remaining answer prefixes
+            # Clean up answers - minimal cleaning to preserve content
             for num, answer in answers.items():
                 if answer:
-                    # Remove any ANSWER_X: prefix that might have been missed
-                    answer = re.sub(r'^ANSWER\s*[\[\]\(\)\-]?\s*\d+\s*[:\-\)\]]\s*', '', answer, flags=re.IGNORECASE)
-                    # Remove any leading numbers or bullets
-                    answer = re.sub(r'^\s*[\d\-\.\)]\s*', '', answer)
-                    answers[num] = answer.strip()
+                    # Only clean if the answer starts with a pattern we want to remove
+                    cleaned = re.sub(r'^(?:ANSWER[\s_]*\d+[\s:]+|\d+[\s\-\.\)]+\s*)', '', answer, flags=re.IGNORECASE, count=1)
+                    answers[num] = cleaned.strip() if cleaned != answer else answer
             
             # Ensure we have all requested query numbers
             for num in query_numbers:
                 num_str = str(num)
-                if not answers.get(num_str):
-                    # Try to find any answer that might match by position
-                    if str(num) in response_text:
-                        # If we see the number in the response, try to extract text around it
-                        answers[num_str] = f"Found relevant information: {response_text[:200]}..."
-                    else:
-                        answers[num_str] = "No specific information found in the document."
+                if not answers.get(num_str) or not answers[num_str]:
+                    answers[num_str] = "No specific information found in the document."
                     
         except Exception as e:
             logger.error(f"Error parsing batch response: {e}")
