@@ -554,7 +554,7 @@ class LLMService:
             raise Exception(f"Text extraction failed: {e}")
 
     def _prepare_file_analysis_prompt(self, queries: List[str], file_type: str = None) -> str:
-        """Prepare prompt for file analysis with Gemini upload."""
+        """Prepare prompt for file analysis with Gemini upload with specialized instructions for different file types."""
         if file_type == 'excel':
             prompt_parts = [
                 "You are an expert data analyst with deep expertise in Excel spreadsheets. Your task is to carefully analyze the provided Excel file and answer the following questions based on the data.",
@@ -595,13 +595,53 @@ class LLMService:
                 "Answer: Jane Smith has the highest salary of $120,000 (Sheet: 'Employee Data', Row: 7). This is 15% higher than the second highest.",
                 "",
                 "=== QUESTIONS TO ANSWER ==="
+            ]
+        elif file_type in ['jpg', 'jpeg', 'png', 'gif']:
+            prompt_parts = [
+                "You are an expert at reading text, numbers, and mathematical expressions from images. Your task is to carefully analyze the provided image and answer the following questions based STRICTLY on the visible data.",
+                "",
+                "CRITICAL INSTRUCTIONS:",
+                "1. For each question, provide the answer based ONLY on the visible data in the image.",
+                "2. For mathematical expressions:",
+                "   - If the exact calculation is shown, report it EXACTLY as shown, even if it's incorrect.",
+                "   - If the expression is shown but not the answer, calculate it correctly.",
+                "   - If the expression is not shown, answer based on your knowledge.",
+                "3. For tables or structured data:",
+                "   - Read values exactly as they appear, including any errors.",
+                "   - Report the raw data without correction.",
+                "4. Format each answer as: ANSWER_[NUMBER]: [your answer]",
+                "5. Each answer must be on a new line.",
+                "6. If you cannot find the information, say 'Not visible in the image'.",
+                "",
+                "QUESTIONS:"
+            ]
+        elif file_type in ['pptx', 'ppt']:
+            prompt_parts = [
+                "You are an expert health insurance policy analyst. Your task is to carefully analyze the provided policy document and answer the following questions.",
+                "",
+                "DOCUMENT TYPE: This is a health insurance policy document in PowerPoint format. Pay special attention to:",
+                "- All slides and their content (titles, bullet points, tables, charts)",
+                "- Speaker notes and slide notes (often contain important details)",
+                "- Fine print, footnotes, and disclaimers",
+                "- Any appendices, reference slides, or additional materials",
+                "- Policy numbers, coverage details, terms and conditions",
+                "",
+                "INSTRUCTIONS:",
+                "1. Read and analyze the ENTIRE document carefully before answering any questions.",
+                "2. For each question, provide a comprehensive response (200-300 characters) with specific references.",
+                "3. Include slide numbers, section headers, or specific locations where the information was found.",
+                "4. For numerical values (limits, sub-limits, waiting periods), provide exact figures from the document.",
+                "5. If a question has multiple parts, address each part clearly in your response.",
+                "6. For coverage details, be specific about what is included and any exclusions.",
+                "7. If you're unsure about an answer, provide the most relevant information you can find.",
+                "",
                 "QUESTIONS:"
             ]
         else:
             prompt_parts = [
                 "You are an expert document analyst. Your task is to carefully analyze the provided document and answer the following questions.",
                 "",
-                "DOCUMENT TYPE: This is a document that may contain various types of content. Pay special attention to:",
+                f"DOCUMENT TYPE: This is a {file_type.upper() if file_type else 'document'} that may contain various types of content. Pay special attention to:",
                 "- All text, tables, and data",
                 "- Headers, sections, and their organization",
                 "- Numerical data and important details",
@@ -641,30 +681,48 @@ class LLMService:
         return "\n".join(prompt_parts)
 
     async def _process_image_with_gemini(self, image_url: str, queries: List[str]) -> List[str]:
-        """Process image using Gemini's vision capabilities with detailed instructions for table reading."""
+        """Process image using Gemini's vision capabilities with detailed instructions for various content types."""
         try:
-            # Prepare the detailed prompt with explicit instructions for reading tables
+            # Prepare the detailed prompt with explicit instructions for different content types
             prompt_parts = [
-                "You are an expert at reading and interpreting tables from images. Your task is to carefully analyze the table in the image and answer the following questions based SOLELY on the visible data.",
+                "You are an expert at analyzing images containing text, tables, and mathematical expressions. Your task is to carefully examine the image and answer the following questions based STRICTLY on the visible data.",
                 "",
-                "CRITICAL INSTRUCTIONS:",
-                "1. Carefully examine the ENTIRE table, including all headers, rows, and columns.",
-                "2. For each question, provide the answer based ONLY on the data visible in the table.",
-                "3. If the table contains the information but you're uncertain about the exact value, make your best attempt to read it.",
-                "4. For numerical values, provide the exact numbers as they appear in the table.",
-                "5. If a question is about a specific sum insured amount, find the corresponding row in the table.",
-                "6. For questions about daily limits or coverage, look for the relevant column in the table.",
-                "7. Format your response as: ANSWER_[NUMBER]: [your answer] with each answer on a new line.",
-                "8. DO NOT say the table doesn't contain the information if you can see relevant data - make your best effort to answer.",
-                "9.If the image contributes the content to answer only few queries, answer them in that context, and the remaining answer from your knowledge strictly, do not mention fie doesnot contain information",
+                "=== CRITICAL INSTRUCTIONS ===",
+                "1. For TABLES:",
+                "   - Carefully examine the ENTIRE table, including all headers, rows, and columns.",
+                "   - Report values exactly as they appear, even if they seem incorrect.",
+                "   - If a value is unclear, make your best attempt to read it and indicate if uncertain.",
                 "",
-                "IMPORTANT: The table appears to have the following structure:",
-                "- First column: Sum Insured amounts (like 4 Lakhs, 8 Lakhs, etc.)",
-                "- Other columns: Different types of coverage/limits (like Room, Boarding, Nursing, ICU, etc.)",
-                "- Rows represent different sum insured amounts",
-                "- Cells contain the coverage/limit amounts",
+                "2. For MATHEMATICAL EXPRESSIONS:",
+                "   - If the exact calculation is shown, report it EXACTLY as shown, even if it's incorrect.",
+                "   - If the expression is shown but not the answer, calculate it correctly.",
+                "   - If the expression is not shown, answer based on your knowledge.",
                 "",
-                "QUESTIONS:"
+                "3. For GENERAL TEXT:",
+                "   - Read the text carefully, including any fine print or disclaimers.",
+                "   - Preserve the original formatting, including line breaks and spacing.",
+                "   - Report text exactly as it appears, including any typos or errors.",
+                "",
+                "4. RESPONSE FORMAT:",
+                "   - Format each answer as: ANSWER_[NUMBER]: [your answer]",
+                "   - Each answer must be on a new line.",
+                "   - If you cannot find the information, say 'Not visible in the image'.",
+                "",
+                "5. IMPORTANT NOTES:",
+                "   - DO NOT correct any errors or typos in the original content.",
+                "   - DO NOT provide information that is not visible in the image.",
+                "   - If the image is blurry or unclear, do your best to read it and indicate if uncertain.",
+                "",
+                "=== EXAMPLE RESPONSES ===",
+                "Question: What is 100+22?",
+                "If image shows '100+22=10022' (incorrect), answer: ANSWER_1: 100+22=10022",
+                "If image shows only '100+22', answer: ANSWER_1: 100+22=122",
+                "",
+                "Question: What is the value in cell B2?",
+                "If cell B2 shows '500', answer: ANSWER_2: 500",
+                "If cell B2 is empty/unclear, answer: ANSWER_2: Not visible in the image",
+                "",
+                "=== QUESTIONS TO ANSWER ==="
             ]
             
             # Add each question with a number
@@ -705,32 +763,43 @@ class LLMService:
             raise Exception(f"Gemini image processing failed: {e}")
 
     def _prepare_text_analysis_prompt(self, queries: List[str], extracted_text: str, file_type: str) -> str:
-        """Prepare prompt for text-based analysis with tabular data support."""
+        """Prepare prompt for text-based analysis with enhanced policy document handling."""
         prompt_parts = [
-            "You are an expert data analyst. Analyze the provided document and answer the following questions.",
+            f"You are an expert {file_type.upper()} policy analyzer. Your task is to carefully analyze the provided document and answer the following questions with precise references.",
             "",
-            "DOCUMENT TYPE: This is a structured document that may contain tabular data.",
-            "For tabular data:",
-            "- Each row is separated by a newline",
-            "- Columns are separated by pipe characters (|)",
-            "- The first row after '--- Sheet: ... ---' contains column headers with numbers (1, 2, 3, ...)",
-            "- The second row contains a separator line (---)",
-            "- Subsequent rows contain the data",
-            "- Empty cells are represented by empty strings",
+            "=== DOCUMENT ANALYSIS INSTRUCTIONS ===",
+            "1. DOCUMENT STRUCTURE:",
+            "   - Carefully examine the entire document, including all sections and subsections.",
+            "   - Pay special attention to policy numbers, coverage details, terms, and conditions.",
+            "   - Note any appendices, schedules, or additional reference materials.",
             "",
-            "INSTRUCTIONS:",
-            "1. Carefully examine the entire document, paying special attention to the structure of any tables.",
-            "2. For each question, provide a clear and concise answer based on the data.",
-            "3. When referring to specific data points, include the row and column references if possible.",
-            "4. If the exact information isn't available, provide the most relevant data you can find.",
-            "5. Format your response as: ANSWER_[NUMBER]: [your answer]",
+            "2. FOR EACH QUESTION:",
+            "   - First search the document for the exact answer.",
+            "   - Include specific section/paragraph numbers in your response.",
+            "   - For numerical values (limits, sub-limits, waiting periods), provide exact figures.",
+            "   - If the exact information isn't found, provide the most relevant details.",
             "",
-            "DOCUMENT CONTENT:",
-            "=" * 50,
+            "3. RESPONSE FORMAT:",
+            "   - Format: ANSWER_[NUMBER]: [your answer] (Reference: [section/paragraph])",
+            "   - Keep responses concise (200-300 characters) but informative.",
+            "   - If uncertain, indicate the level of confidence in your answer.",
+            "",
+            "=== EXAMPLE QUERIES AND ANSWERS ===",
+            "Query: 'What is the waiting period for pre-existing conditions?'",
+            "Answer: 'ANSWER_1: 48 months waiting period applies for pre-existing conditions. (Reference: Section 4.2.1)'",
+            "",
+            "Query: 'What is the room rent limit under this policy?'",
+            "Answer: 'ANSWER_2: Room rent is limited to 1% of sum insured per day, max ₹5,000/day. (Reference: Clause 7.3.2)'",
+            "",
+            "Query: 'Can I claim maternity expenses under this policy?'",
+            "Answer: 'ANSWER_3: Maternity coverage is excluded from this policy. (Reference: Section 5.4, Exclusions)'",
+            "",
+            f"=== DOCUMENT CONTENT (first 15,000 characters) ===",
+            "=" * 70,
             extracted_text[:15000],  # Limit content size
-            "=" * 50,
+            "=" * 70,
             "",
-            "QUESTIONS:"
+            "=== QUESTIONS TO ANSWER ==="      
         ]
         
         for i, query in enumerate(queries, 1):
@@ -750,57 +819,28 @@ class LLMService:
         
         return "\n".join(prompt_parts)
 
-    def _prepare_batch_query_prompt(self, queries_with_context: List[Tuple[int, str, List[str]]]) -> str:
-        """Prepares a batch prompt for multiple policy-related queries with context."""
+    async def _call_llm_batch(self, prompt: str, api_key: str, timeout: float = 60.0) -> str:
+        """
+        Enhanced LLM call for batch processing with improved error handling and compatibility.
         
-        # Build the batch prompt with policy-specific instructions
-        prompt_parts = [
-            "You are an expert health insurance policy analyst. Answer questions based on the provided policy context or standard policy knowledge.",
-            "",
-            "EXAMPLE QUERY AND ANSWER:",
-            "Query: 'I have raised a claim for hospitalization for Rs 200,000 with HDFC, and it's approved. My total expenses are Rs 250,000. Can I raise the remaining Rs 50,000 with you?'",
-            "Answer: 'Yes, under Arogya Sanjeevani Policy under Clause 10.8'",
-            "",
-            "CRITICAL INSTRUCTIONS:",
-            "1. For each question, search the provided context for relevant policy sections.",
-            "2. If found, provide a concise answer (around 250 chars) with section references.",
-            "3. If not found, provide a general answer based on standard policy terms.",
-            "4. For claim-related queries, mention relevant clauses (e.g., 'Under Clause 10.8...')",
-            "5. Format: ANSWER_[NUMBER]: [concise answer with section references]",
-            "",
-            "QUESTIONS AND POLICY CONTEXTS:",
-            ""
-        ]
-        
-        for query_num, query, context_chunks in queries_with_context:
-            prompt_parts.append(f"QUESTION_{query_num}: {query}")
-            prompt_parts.append("RELEVANT POLICY SECTIONS:")
-            if context_chunks:
-                for i, chunk in enumerate(context_chunks[:5]):  # Top 5 most relevant policy sections
-                    prompt_parts.append(f"- {chunk}")
-            else:
-                prompt_parts.append("- General policy knowledge")
-            prompt_parts.append("")
-        
-        prompt_parts.extend([
-            "RESPONSE GUIDELINES:",
-            "1. Reference specific sections when possible (e.g., 'As per Section 4.2...' or 'Under Clause 10.8...')",
-            "2. For claim amounts, specify coverage limits and conditions",
-            "3. Keep answers concise (around 250 characters) but informative",
-            "4. For partial claims, mention portability benefits under Clause 10.8",
-            "5. If exact section isn't found, provide the most relevant information available",
-            "",
-            "Format: ANSWER_[NUMBER]: [concise answer with section references]"
-        ])
-        
-        return "\n".join(prompt_parts)
-
-    async def _call_llm_batch(self, prompt: str, api_key: str, timeout: float = 30.0) -> str:
-        """Enhanced LLM call for batch processing with increased timeout."""
+        Args:
+            prompt: The prompt to send to the model
+            api_key: Gemini API key to use
+            timeout: Maximum time to wait for response in seconds
+            
+        Returns:
+            str: The generated response text
+            
+        Raises:
+            Exception: If the API call fails or times out
+        """
         try:
+            # Configure Gemini with the provided API key
             genai.configure(api_key=api_key)
+            
+            # Initialize the model with appropriate settings
             model = genai.GenerativeModel(
-                self.model_name,
+                model_name=self.model_name,
                 generation_config={
                     "temperature": 0.1,
                     "max_output_tokens": 4096,
@@ -815,18 +855,40 @@ class LLMService:
                 }
             )
 
-            response = await asyncio.wait_for(
-                model.generate_content_async(prompt),
-                timeout=timeout
-            )
-            return response.text.strip() if response.text else "Unable to generate response"
+            # Make the API call with timeout
+            try:
+                # Try the async method first
+                response = await asyncio.wait_for(
+                    model.generate_content_async(prompt),
+                    timeout=timeout
+                )
+            except AttributeError:
+                # Fallback to sync method if async is not available
+                response = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: model.generate_content(prompt)
+                )
             
-        except asyncio.TimeoutError:
-            logger.error(f"API call timeout with key ...{api_key[-4:]}")
-            raise Exception(f"Request timeout after {timeout}s - please try again")
+            # Extract the response text
+            if hasattr(response, 'text'):
+                return response.text.strip()
+            elif hasattr(response, 'result'):
+                return response.result().strip()
+            elif hasattr(response, 'candidates') and response.candidates:
+                return response.candidates[0].content.parts[0].text.strip()
+            else:
+                logger.warning(f"Unexpected response format: {response}")
+                return "Unable to extract response from API"
+            
+        except asyncio.TimeoutError as te:
+            error_msg = f"API call timed out after {timeout}s with key ...{api_key[-4:]}"
+            logger.error(error_msg)
+            raise Exception(error_msg) from te
+            
         except Exception as e:
-            logger.error(f"API call failed with key ...{api_key[-4:]}: {e}")
-            raise Exception(f"Gemini API call failed: {str(e)[:100]}")
+            error_msg = f"Gemini API call failed: {str(e)}"
+            logger.error(f"{error_msg} (key: ...{api_key[-4:]})")
+            raise Exception(error_msg) from e
 
     def _parse_batch_response(self, response_text: str, query_numbers: List[int]) -> Dict[str, str]:
         """Parse the batch response to extract individual answers with enhanced handling for different formats."""
