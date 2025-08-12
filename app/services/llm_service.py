@@ -422,11 +422,49 @@ class LLMService:
 
     async def _process_file_with_gemini(self, queries: List[str], file_bytes: bytes, 
                                       file_type: str, api_key: str) -> Dict[str, str]:
-        """Process file using Gemini's file upload capability."""
+        """Process file using Gemini's file upload capability with enhanced Excel handling."""
         try:
             logger.info(f"Processing {file_type} file with Gemini upload...")
             
-            # Determine MIME type
+            # Configure Gemini
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            
+            # For Excel files, use text extraction first for better results
+            if file_type == 'excel':
+                try:
+                    logger.info("Extracting text from Excel file for better processing...")
+                    extracted_text = self._extract_text_from_excel(file_bytes)
+                    prompt = self._prepare_text_analysis_prompt(queries, extracted_text, file_type)
+                    
+                    # Add specific instructions for Excel data analysis
+                    excel_instructions = """
+                    You are analyzing an Excel spreadsheet. Follow these guidelines:
+                    1. Carefully examine all sheets and their headers
+                    2. Look for data tables and identify column headers
+                    3. Pay attention to numerical data and any associated labels
+                    4. If you see multiple sheets, analyze each one's purpose
+                    5. For numerical data, note any units or currencies
+                    6. Look for any summary tables or key metrics
+                    """
+                    
+                    full_prompt = f"{excel_instructions}\n\n{prompt}"
+                    response = await model.generate_content_async(full_prompt)
+                    
+                    # Parse and validate the response
+                    parsed_response = self._parse_batch_response(response.text, list(range(1, len(queries) + 1)))
+                    
+                    # Verify we have answers for all queries
+                    if len(parsed_response) == len(queries) and all(parsed_response.values()):
+                        return parsed_response
+                        
+                    # If we're missing answers, try direct file processing as fallback
+                    logger.info("Text extraction approach incomplete, trying direct file processing...")
+                    
+                except Exception as e:
+                    logger.warning(f"Text extraction approach failed, trying direct processing: {e}")
+            
+            # Determine MIME type for direct processing
             mime_types = {
                 'image': 'image/png',
                 'pdf': 'application/pdf',
@@ -437,55 +475,41 @@ class LLMService:
             
             mime_type = mime_types.get(file_type, 'application/octet-stream')
             
-            # Get the file bytes (no separate upload step needed)
-            file_data = await self._upload_to_gemini(file_bytes, mime_type, api_key)
-            
-            # Prepare prompt with file type information
+            # Prepare prompt with specific instructions for the file type
             prompt = self._prepare_file_analysis_prompt(queries, file_type)
             
-            # Configure Gemini
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel(
-                self.model_name,
-                generation_config={
-                    "temperature": 0.1,
-                    "max_output_tokens": 4096,
-                    "top_p": 0.9,
-                    "top_k": 30
-                },
-                safety_settings={
-                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-                }
-            )
-            
-            # For Excel files, extract text first for better processing
-            if file_type == 'excel':
-                try:
-                    # First try to process the Excel file directly
-                    response = await model.generate_content_async([file_data, prompt])
-                except Exception as e:
-                    logger.warning(f"Direct Excel processing failed, falling back to text extraction: {e}")
-                    # If direct processing fails, extract text and try again
-                    extracted_text = self._extract_text_from_excel(file_bytes)
-                    response = await model.generate_content_async([f"Excel content:\n{extracted_text}\n\n{prompt}"])
-            # For images, use the bytes directly
-            elif file_type == 'image':
-                response = await model.generate_content_async([file_data, prompt])
-            else:
-                # For other file types, convert to text first
-                text_content = await asyncio.to_thread(self._extract_text_from_bytes, file_bytes, file_type)
-                response = await model.generate_content_async([f"File content:\n{text_content}\n\n{prompt}."])
-            
-            # Parse response
-            query_numbers = list(range(1, len(queries) + 1))
-            return self._parse_batch_response(response.text, query_numbers)
-            
+            try:
+                # Process the file directly with Gemini
+                response = await model.generate_content_async([
+                    prompt,
+                    {"mime_type": mime_type, "data": file_bytes}
+                ])
+                
+                # Parse the response
+                parsed_response = self._parse_batch_response(response.text, list(range(1, len(queries) + 1)))
+                
+                # If we got valid responses, return them
+                if parsed_response and all(parsed_response.values()):
+                    return parsed_response
+                    
+                # If we're here, the direct approach didn't work well, try text extraction
+                if file_type != 'excel':  # We already tried this for Excel
+                    logger.info("Direct processing incomplete, trying text extraction...")
+                    extracted_text = await asyncio.to_thread(self._extract_text_from_bytes, file_bytes, file_type)
+                    prompt = self._prepare_text_analysis_prompt(queries, extracted_text, file_type)
+                    response = await model.generate_content_async(prompt)
+                    parsed_response = self._parse_batch_response(response.text, list(range(1, len(queries) + 1)))
+                    
+                return parsed_response or {str(i+1): "Could not process the document" for i in range(len(queries))}
+                
+            except Exception as e:
+                logger.error(f"Error in Gemini file processing: {e}")
+                # Last resort: return a helpful error message
+                return {str(i+1): f"Error processing the document: {str(e)[:200]}" for i in range(len(queries))}
+                
         except Exception as e:
-            logger.error(f"Error processing file with Gemini: {e}")
-            raise Exception(f"Gemini file processing failed: {e}")
+            logger.error(f"Critical error in file processing: {e}", exc_info=True)
+            return {str(i+1): "An error occurred while processing your request" for i in range(len(queries))}
 
     async def _process_text_based_file(self, queries: List[str], file_bytes: bytes, 
                                      file_type: str, api_key: str) -> Dict[str, str]:
@@ -533,33 +557,44 @@ class LLMService:
         """Prepare prompt for file analysis with Gemini upload."""
         if file_type == 'excel':
             prompt_parts = [
-                "You are an expert data analyst. Your task is to carefully analyze the provided Excel spreadsheet and answer the following questions based on the data.",
+                "You are an expert data analyst with deep expertise in Excel spreadsheets. Your task is to carefully analyze the provided Excel file and answer the following questions based on the data.",
                 "",
-                "DOCUMENT TYPE: This is an Excel spreadsheet containing tabular data. Pay special attention to:",
-                "- All sheets and their content (headers, data rows, formulas, and values)",
-                "- Column headers and their meanings",
-                "- Numerical data, dates, and text fields",
-                "- Any summary tables or calculated fields",
+                "=== IMPORTANT INSTRUCTIONS FOR EXCEL ANALYSIS ===",
+                "1. DOCUMENT STRUCTURE:",
+                "   - Examine ALL sheets in the workbook, including any hidden ones",
+                "   - Identify the purpose of each sheet (e.g., raw data, summaries, calculations)",
+                "   - Check for any hidden rows, columns, or sheets that might contain important information",
                 "",
-                "INSTRUCTIONS:",
-                "1. Analyze ALL sheets and their content before answering any questions.",
-                "2. For each question, provide a precise response based on the data in the spreadsheet.",
-                "3. Reference specific sheet names and cell ranges (e.g., 'Sheet1!A1:B10') where you found the information.",
-                "4. For numerical values, provide exact figures from the data.",
-                "5. If a question has multiple parts, address each part clearly in your response.",
-                "6. If you need to perform calculations, show your work or explain your reasoning.",
-                "7. If the exact information isn't available, provide the closest match or state that the data is not available.",
+                "2. DATA ANALYSIS:",
+                "   - Carefully examine all column headers and understand their relationships",
+                "   - Identify the main data tables and their structures",
+                "   - Pay special attention to numerical data, calculations, and formulas",
+                "   - Look for any data validation rules or conditional formatting",
+                "   - Note any patterns, trends, or anomalies in the data",
                 "",
-                "EXAMPLE QUERIES AND ANSWERS:",
-                "Question: What is the phone number of John Doe?",
-                "Answer: The phone number of John Doe is 123-456-7890 (Sheet1!C5).",
+                "3. KEY ELEMENTS TO IDENTIFY:",
+                "   - Summary statistics (totals, averages, counts, etc.)",
+                "   - Important metrics or KPIs",
+                "   - Date ranges and time-based data",
+                "   - Categorical data and their distributions",
+                "   - Any data relationships or correlations",
+                "",
+                "4. FOR EACH QUESTION:",
+                "   - Consider all relevant sheets and data points",
+                "   - If exact matches aren't found, provide the closest available information",
+                "   - For numerical questions, include specific values and their context",
+                "   - If a question has multiple parts, address each part in order",
+                "   - Be precise and specific in your answers",
+                "",
+                "=== EXAMPLE QUERIES AND ANSWERS ===",
                 "",
                 "Question: What is the total sales for Q1?",
-                "Answer: The total sales for Q1 is $45,200 (Sheet2!B10).",
+                "Answer: The total sales for Q1 is $45,200 (Sheet: 'Sales Data', Cell: B10). This includes all regions and product categories.",
                 "",
                 "Question: Who has the highest salary in the company?",
-                "Answer: Jane Smith has the highest salary of $120,000 (Sheet1!D7).",
+                "Answer: Jane Smith has the highest salary of $120,000 (Sheet: 'Employee Data', Row: 7). This is 15% higher than the second highest.",
                 "",
+                "=== QUESTIONS TO ANSWER ==="
                 "QUESTIONS:"
             ]
         else:
@@ -794,50 +829,69 @@ class LLMService:
             raise Exception(f"Gemini API call failed: {str(e)[:100]}")
 
     def _parse_batch_response(self, response_text: str, query_numbers: List[int]) -> Dict[str, str]:
-        """Parse the batch response to extract individual answers."""
-        answers = {}
+        """Parse the batch response to extract individual answers with enhanced handling for Excel data."""
+        answers = {str(num): "" for num in query_numbers}  # Initialize with empty answers
         
+        if not response_text or not response_text.strip():
+            logger.warning("Empty response text received")
+            return answers
+            
         try:
-            # Split response by lines and look for ANSWER_ patterns
-            lines = response_text.split('\n')
-            current_answer = ""
-            current_num = None
+            # First, try to find explicit ANSWER_X patterns
+            answer_pattern = re.compile(r'ANSWER\s*[\[\]\(\)\-]?\s*(\d+)\s*[:\)\-]\s*(.+?)(?=\n\s*ANSWER|\Z)', 
+                                     re.IGNORECASE | re.DOTALL)
             
-            for line in lines:
-                line = line.strip()
+            matches = list(answer_pattern.finditer(response_text))
+            
+            if matches:
+                logger.info(f"Found {len(matches)} explicit answer patterns in response")
+                for match in matches:
+                    num = match.group(1).strip()
+                    answer = match.group(2).strip()
+                    if num.isdigit() and int(num) in query_numbers:
+                        answers[num] = answer
+                    else:
+                        logger.warning(f"Invalid answer number found: {num}")
+            
+            # If we didn't find explicit patterns, try to split by numbered items
+            if not any(answers.values()):
+                logger.info("No explicit answer patterns found, trying numbered items")
+                # Look for patterns like "1. " or "1) "
+                item_pattern = re.compile(r'(?:^|\n)\s*(\d+)[\.\)]\s+(.+?)(?=\n\s*\d+[\.\)]|\Z)', 
+                                        re.DOTALL)
+                matches = item_pattern.finditer(response_text)
                 
-                # Check if line starts with ANSWER_
-                answer_match = re.match(r'ANSWER[_\s]*(\d+)[:\s]*(.+)', line, re.IGNORECASE)
-                if answer_match:
-                    # Save previous answer if exists
-                    if current_num is not None and current_answer.strip():
-                        answers[str(current_num)] = current_answer.strip()
-                    
-                    # Start new answer
-                    current_num = int(answer_match.group(1))
-                    current_answer = answer_match.group(2).strip()
-                elif current_num is not None and line:
-                    # Continue building current answer
-                    current_answer += " " + line
+                for i, match in enumerate(matches):
+                    num = match.group(1)
+                    answer = match.group(2).strip()
+                    if num.isdigit() and int(num) in query_numbers:
+                        answers[num] = answer
+                    elif i < len(query_numbers):
+                        # If we can't parse the number, just use the position
+                        answers[str(query_numbers[i])] = answer
             
-            # Save the last answer
-            if current_num is not None and current_answer.strip():
-                answers[str(current_num)] = current_answer.strip()
+            # If we still don't have answers, try to split by double newlines
+            if not any(answers.values()):
+                logger.info("No numbered items found, trying paragraph split")
+                paragraphs = [p.strip() for p in response_text.split('\n\n') if p.strip()]
+                for i, num in enumerate(query_numbers):
+                    if i < len(paragraphs):
+                        answers[str(num)] = paragraphs[i]
             
-            # Fallback parsing if the above doesn't work well
-            if not answers:
-                # Try to extract answers by splitting on ANSWER_ keywords
-                answer_blocks = re.split(r'ANSWER[_\s]*\d+[:\s]*', response_text, flags=re.IGNORECASE)
-                if len(answer_blocks) > 1:  # First block is usually empty
-                    for i, block in enumerate(answer_blocks[1:], 1):
-                        if i <= len(query_numbers):
-                            answer = block.strip().split('\n')[0] if block.strip() else "No answer provided"
-                            answers[str(query_numbers[i-1])] = answer[:1000]  # Limit length
+            # Clean up answers - remove any remaining answer prefixes
+            for num, answer in answers.items():
+                if answer:
+                    # Remove any ANSWER_X: prefix that might have been missed
+                    answer = re.sub(r'^ANSWER\s*[\[\]\(\)\-]?\s*\d+\s*[:\)\-]\s*', '', answer, flags=re.IGNORECASE)
+                    # Remove any leading numbers or bullets
+                    answer = re.sub(r'^\s*[\d\-\.\)]\s*', '', answer)
+                    answers[num] = answer.strip()
             
-            # Ensure all query numbers have answers
+            # Ensure we have all requested query numbers
             for num in query_numbers:
-                if str(num) not in answers:
-                    answers[str(num)] = "Unable to extract answer from response"
+                num_str = str(num)
+                if not answers.get(num_str):
+                    answers[num_str] = "No specific information found in the document."
                     
         except Exception as e:
             logger.error(f"Error parsing batch response: {e}")
