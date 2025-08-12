@@ -467,13 +467,13 @@ class LLMService:
                 }
             )
             
-            # For image files, use the bytes directly
-            if file_type == 'image':
+            # For image and Excel files, use the bytes directly
+            if file_type in ['image', 'excel']:
                 response = await model.generate_content_async([file_data, prompt])
             else:
                 # For other file types, convert to text first
                 text_content = await asyncio.to_thread(self._extract_text_from_bytes, file_bytes, file_type)
-                response = await model.generate_content_async([f"File content:\n{text_content}\n\n{prompt}"])
+                response = await model.generate_content_async([f"File content:\n{text_content}\n\n{prompt}."])
             
             # Parse response
             query_numbers = list(range(1, len(queries) + 1))
@@ -981,6 +981,31 @@ class LLMService:
                     logger.error(f"Error processing PDF: {e}", exc_info=True)
                     return {str(i+1): f"Error processing PDF: {str(e)[:200]}" for i in range(len(queries))}
             
+            # For Excel files, process with direct Gemini upload
+            elif file_type == 'excel':
+                try:
+                    # Download the file
+                    file_bytes = await asyncio.to_thread(self._download_file, url)
+                    if not file_bytes:
+                        return {str(i+1): "Error: No content could be retrieved from the URL" for i in range(len(queries))}
+                    
+                    # Process with Gemini
+                    return await self._process_file_with_gemini(queries, file_bytes, file_type, api_key)
+                        
+                except Exception as e:
+                    logger.error(f"Error processing Excel file: {e}", exc_info=True)
+                    # Fall back to text extraction if direct processing fails
+                    try:
+                        extracted_text = self._extract_text_from_excel(file_bytes)
+                        if extracted_text.strip():
+                            prompt = self._prepare_text_analysis_prompt(queries, extracted_text, file_type)
+                            response = await self._call_llm_batch(prompt, api_key)
+                            return self._parse_batch_response(response, list(range(1, len(queries) + 1)))
+                    except Exception as inner_e:
+                        logger.error(f"Error in fallback Excel processing: {inner_e}")
+                    
+                    return {str(i+1): f"Error processing Excel file: {str(e)[:200]}" for i in range(len(queries))}
+            
             # For unknown file types, try direct processing
             else:
                 logger.info("Processing as unknown file with direct processing...")
@@ -996,8 +1021,6 @@ class LLMService:
                 except Exception as e:
                     logger.error(f"Error processing unknown file: {e}", exc_info=True)
                     return {str(i+1): f"Error processing file: {str(e)[:200]}" for i in range(len(queries))}
-                try:
-                    file_bytes = await asyncio.to_thread(self._download_file, url)
                     # First try local text extraction
                     doc = fitz.open(stream=file_bytes, filetype="pdf")
                     extracted_text = ""
