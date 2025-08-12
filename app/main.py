@@ -61,11 +61,8 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) 
         )
     return credentials.credentials
 
-# Import DirectLLMService
-from app.services.direct_llm_service import DirectLLMService
-
-# Initialize the DirectLLMService
-direct_llm_service = DirectLLMService()
+# Import the LLMService
+from app.services.llm_service import llm_service
 
 # Add CORS middleware
 app.add_middleware(
@@ -138,26 +135,21 @@ async def query_document(
     start_time = time.time()
     
     try:
-        # Process queries using the direct LLM service
-        logger.info(f"Sending request to direct_llm_service with document: {query_data.documents}")
+        # Process queries using the LLM service
+        logger.info(f"Processing document: {query_data.documents}")
         logger.info(f"Questions: {query_data.questions}")
         
-        # Get the answers directly from the direct LLM service
-        answers = await direct_llm_service.process_queries(
-            document_url=str(query_data.documents),
-            queries=query_data.questions
+        # Get the answers from the LLM service
+        results = await llm_service.process_queries(
+            queries=query_data.questions,
+            document_link=str(query_data.documents)
         )
         
-        logger.info(f"Answers from direct_llm_service: {answers}")
+        # Convert results to list format expected by QueryResponse
+        answers = [results.get(str(i+1), "No response generated") 
+                  for i in range(len(query_data.questions))]
         
-        # Ensure we have the correct number of answers
-        if len(answers) != len(query_data.questions):
-            logger.warning(f"Number of answers ({len(answers)}) doesn't match number of questions ({len(query_data.questions)})")
-            # Pad or truncate answers to match the number of questions
-            if len(answers) < len(query_data.questions):
-                answers = answers + ["No response generated"] * (len(query_data.questions) - len(answers))
-            else:
-                answers = answers[:len(query_data.questions)]
+        logger.info(f"Successfully processed {len(answers)} answers")
         
         # Prepare the final response object
         response_data = QueryResponse(answers=answers)
@@ -256,18 +248,18 @@ async def health_check():
         )
 
 class DirectQueryRequest(BaseModel):
-    """Request model for direct LLM queries."""
-    documents: str  # Document URL as string
+    """Request model for LLM queries."""
+    documents: str
     questions: List[str]  # List of questions
 
-@app.post("/hackrx/direct", response_model=Dict[str, Any])
+@app.post("/direct-query", response_model=Dict[str, str])
 async def process_direct_queries(
     request: Request, 
     query_request: DirectQueryRequest,
     _: str = Depends(verify_token)
 ):
     """
-    Process queries by directly passing the URL to Gemini.
+    Process queries using the LLM service.
     
     Args:
         request: The FastAPI request object
@@ -277,23 +269,26 @@ async def process_direct_queries(
         Dictionary containing the answers to the queries
     """
     try:
-        # Process the queries using the direct LLM service
-        results = await direct_llm_service.process_queries(
-            document_url=query_request.documents,
-            queries=query_request.questions
+        logger.info(f"Received query request for document: {query_request.documents}")
+        logger.info(f"Questions: {query_request.questions}")
+        
+        # Process the queries using the LLM service
+        results = await llm_service.process_queries(
+            queries=query_request.questions,
+            document_link=query_request.documents
         )
         
-        # Convert the results to the expected format
-        answers = [results.get(str(i+1), "No response generated") 
-                  for i in range(len(query_request.questions))]
+        # Convert results to the expected format
+        answers = {str(i+1): results[str(i+1)] for i in range(len(query_request.questions))}
         
-        return {"answers": answers}
+        logger.info("Successfully processed queries")
+        return answers
         
     except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
+        logger.error(f"Error in process_queries: {str(e)}", exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Service unavailable"
+            status_code=500,
+            detail=f"Error processing queries: {str(e)}"
         )
 
 if __name__ == "__main__":
