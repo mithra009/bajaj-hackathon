@@ -1392,7 +1392,8 @@ class LLMService:
         Process URL directly with Gemini when conventional methods fail.
         """
         try:
-            api_key = self._get_next_api_key()
+            key_index = get_next_key_index(len(self.gemini_api_keys))
+            api_key = self.gemini_api_keys[key_index]
             logger.info(f"Using direct URL processing with Gemini for: {document_url}")
             genai.configure(api_key=api_key)
             
