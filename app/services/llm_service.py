@@ -157,64 +157,58 @@ class LLMService:
             raise Exception(f"Failed to process file for Gemini: {e}")
 
     def _extract_text_from_excel(self, file_bytes: bytes) -> str:
-        """Extract text from Excel file with improved table formatting."""
+        """Extract text from Excel file with detailed logging."""
         try:
-            import pandas as pd
-            from io import BytesIO
-            
             logger.info("Starting Excel file processing...")
             start_time = time.time()
             
-            # Read the Excel file into a pandas DataFrame
-            xls = pd.ExcelFile(BytesIO(file_bytes))
-            sheet_names = xls.sheet_names
+            # Load workbook
+            workbook = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+            sheet_count = len(workbook.sheetnames)
+            logger.info(f"Loaded Excel file with {sheet_count} sheets")
+            
             extracted_text = []
             total_rows = 0
             
-            for sheet_name in sheet_names:
-                try:
-                    # Read the sheet into a DataFrame
-                    df = pd.read_excel(xls, sheet_name=sheet_name, header=None, dtype=str)
-                    
-                    # Convert all values to strings and handle NaN/None
-                    df = df.fillna('').astype(str)
-                    
-                    # Add sheet header
-                    sheet_rows = len(df)
-                    total_rows += sheet_rows
-                    sheet_header = f"\n--- Sheet: {sheet_name} ({sheet_rows} rows) ---"
-                    extracted_text.append(sheet_header)
-                    logger.debug(f"Processing sheet: {sheet_name} with {sheet_rows} rows")
-                    
-                    # Convert DataFrame to a markdown-style table for better LLM comprehension
-                    table_str = []
-                    
-                    # Add header row with column numbers
-                    headers = [str(i+1) for i in range(len(df.columns))]
-                    table_str.append("| " + " | ".join(headers) + " |")
-                    table_str.append("|" + "|".join(["---"] * len(headers)) + "|")
-                    
-                    # Add data rows
-                    for _, row in df.iterrows():
-                        # Escape pipe characters in cell content and replace newlines
-                        row_str = "| " + " | ".join(
-                            str(cell).replace('\n', ' ').replace('|', '\\|')
-                            for cell in row
-                        ) + " |"
-                        table_str.append(row_str)
-                    
-                    extracted_text.append("\n".join(table_str))
-                    
-                except Exception as e:
-                    logger.error(f"Error processing sheet '{sheet_name}': {str(e)}")
-                    extracted_text.append(f"\nError processing sheet '{sheet_name}': {str(e)[:200]}\n")
+            for sheet_name in workbook.sheetnames:
+                sheet = workbook[sheet_name]
+                sheet_rows = sheet.max_row
+                total_rows += sheet_rows
+                
+                sheet_header = f"\n--- Sheet: {sheet_name} ({sheet_rows} rows) ---"
+                extracted_text.append(sheet_header)
+                logger.debug(f"Processing sheet: {sheet_name} with {sheet_rows} rows")
+                
+                # Get headers if they exist
+                headers = []
+                if sheet.max_row > 0:
+                    headers = [str(cell.value) if cell.value is not None else f"Column{idx+1}" 
+                             for idx, cell in enumerate(sheet[1])]
+                
+                # Add header row if exists
+                if headers:
+                    extracted_text.append(" | ".join(headers))
+                    start_row = 2
+                else:
+                    start_row = 1
+                
+                # Process data rows
+                for row in sheet.iter_rows(min_row=start_row, values_only=True):
+                    row_text = []
+                    for cell in row:
+                        if cell is not None:
+                            cell_text = str(cell).strip()
+                            if cell_text:  # Only include non-empty cells
+                                row_text.append(cell_text)
+                    if row_text:  # Only add non-empty rows
+                        extracted_text.append(" | ".join(row_text))
             
-            result = "\n".join(extracted_text)
             processing_time = time.time() - start_time
+            result = "\n".join(extracted_text)
             
             logger.info(
                 f"Excel processing completed in {processing_time:.2f}s. "
-                f"Extracted {total_rows} total rows from {len(sheet_names)} sheets. "
+                f"Extracted {total_rows} total rows from {sheet_count} sheets. "
                 f"Total text length: {len(result)} characters"
             )
             
