@@ -829,7 +829,7 @@ class LLMService:
             raise Exception(f"Gemini API call failed: {str(e)[:100]}")
 
     def _parse_batch_response(self, response_text: str, query_numbers: List[int]) -> Dict[str, str]:
-        """Parse the batch response to extract individual answers with enhanced handling for Excel data."""
+        """Parse the batch response to extract individual answers with enhanced handling for different formats."""
         answers = {str(num): "" for num in query_numbers}  # Initialize with empty answers
         
         if not response_text or not response_text.strip():
@@ -837,27 +837,41 @@ class LLMService:
             return answers
             
         try:
-            # First, try to find explicit ANSWER_X patterns
-            answer_pattern = re.compile(r'ANSWER\s*[\[\]\(\)\-]?\s*(\d+)\s*[:\)\-]\s*(.+?)(?=\n\s*ANSWER|\Z)', 
-                                     re.IGNORECASE | re.DOTALL)
+            # Handle case where response is already in the format we want (list of ANSWER_X: value)
+            if isinstance(response_text, str) and 'ANSWER_' in response_text:
+                # Split by newlines to handle each answer separately
+                answer_lines = [line.strip() for line in response_text.split('\n') if line.strip()]
+                
+                for line in answer_lines:
+                    # Try to match ANSWER_X: value
+                    match = re.match(r'ANSWER[_\s]*(\d+)[:\s]*(.+)', line, re.IGNORECASE)
+                    if match:
+                        num = match.group(1).strip()
+                        answer = match.group(2).strip()
+                        if num.isdigit() and int(num) in query_numbers:
+                            answers[num] = answer
             
-            matches = list(answer_pattern.finditer(response_text))
+            # If we didn't find any answers yet, try more patterns
+            if not any(answers.values()):
+                # Try to split by ANSWER_X patterns in the text
+                answer_pattern = re.compile(r'ANSWER[_\s]*(\d+)[:\s]*(.+?)(?=\s*ANSWER|$)', 
+                                         re.IGNORECASE | re.DOTALL)
+                
+                matches = list(answer_pattern.finditer(response_text))
+                
+                if matches:
+                    logger.info(f"Found {len(matches)} explicit answer patterns in response")
+                    for match in matches:
+                        num = match.group(1).strip()
+                        answer = match.group(2).strip()
+                        if num.isdigit() and int(num) in query_numbers:
+                            answers[num] = answer
             
-            if matches:
-                logger.info(f"Found {len(matches)} explicit answer patterns in response")
-                for match in matches:
-                    num = match.group(1).strip()
-                    answer = match.group(2).strip()
-                    if num.isdigit() and int(num) in query_numbers:
-                        answers[num] = answer
-                    else:
-                        logger.warning(f"Invalid answer number found: {num}")
-            
-            # If we didn't find explicit patterns, try to split by numbered items
+            # If we still don't have answers, try to split by numbered items
             if not any(answers.values()):
                 logger.info("No explicit answer patterns found, trying numbered items")
                 # Look for patterns like "1. " or "1) "
-                item_pattern = re.compile(r'(?:^|\n)\s*(\d+)[\.\)]\s+(.+?)(?=\n\s*\d+[\.\)]|\Z)', 
+                item_pattern = re.compile(r'(?:^|\n)\s*(\d+)[\.\)]\s+(.+?)(?=\n\s*\d+[\.\)]|$)', 
                                         re.DOTALL)
                 matches = item_pattern.finditer(response_text)
                 
@@ -866,23 +880,12 @@ class LLMService:
                     answer = match.group(2).strip()
                     if num.isdigit() and int(num) in query_numbers:
                         answers[num] = answer
-                    elif i < len(query_numbers):
-                        # If we can't parse the number, just use the position
-                        answers[str(query_numbers[i])] = answer
-            
-            # If we still don't have answers, try to split by double newlines
-            if not any(answers.values()):
-                logger.info("No numbered items found, trying paragraph split")
-                paragraphs = [p.strip() for p in response_text.split('\n\n') if p.strip()]
-                for i, num in enumerate(query_numbers):
-                    if i < len(paragraphs):
-                        answers[str(num)] = paragraphs[i]
             
             # Clean up answers - remove any remaining answer prefixes
             for num, answer in answers.items():
                 if answer:
                     # Remove any ANSWER_X: prefix that might have been missed
-                    answer = re.sub(r'^ANSWER\s*[\[\]\(\)\-]?\s*\d+\s*[:\)\-]\s*', '', answer, flags=re.IGNORECASE)
+                    answer = re.sub(r'^ANSWER\s*[\[\]\(\)\-]?\s*\d+\s*[:\-\)\]]\s*', '', answer, flags=re.IGNORECASE)
                     # Remove any leading numbers or bullets
                     answer = re.sub(r'^\s*[\d\-\.\)]\s*', '', answer)
                     answers[num] = answer.strip()
@@ -891,18 +894,20 @@ class LLMService:
             for num in query_numbers:
                 num_str = str(num)
                 if not answers.get(num_str):
-                    answers[num_str] = "No specific information found in the document."
+                    # Try to find any answer that might match by position
+                    if str(num) in response_text:
+                        # If we see the number in the response, try to extract text around it
+                        answers[num_str] = f"Found relevant information: {response_text[:200]}..."
+                    else:
+                        answers[num_str] = "No specific information found in the document."
                     
         except Exception as e:
             logger.error(f"Error parsing batch response: {e}")
-            # Fallback: split response roughly by number of queries
-            parts = response_text.split('\n\n') if '\n\n' in response_text else [response_text]
-            for i, num in enumerate(query_numbers):
-                if i < len(parts):
-                    answers[str(num)] = parts[i]
-                else:
-                    answers[str(num)] = "Unable to parse answer from response"
+            # Fallback: return the full response for each query
+            for num in query_numbers:
+                answers[str(num)] = response_text[:500]  # Limit to first 500 chars to avoid huge responses
         
+        logger.debug(f"Parsed answers: {answers}")
         return answers
 
     async def _process_non_pdf_file(self, queries: List[str], url: str) -> Dict[str, str]:
