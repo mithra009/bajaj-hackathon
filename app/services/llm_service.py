@@ -788,10 +788,10 @@ class LLMService:
                 "Please provide your answers based on the table data. If you can see the information in the table, provide the exact values. If the information is not in the table, say 'The table does not contain this information.'"
             ])
             
-            # Generate response
+            # Generate response with Gemini 2.0 Flash
             genai.configure(api_key=self.gemini_api_keys[0])
             model = genai.GenerativeModel(
-                self.model_name,
+                "gemini-2.0-flash",  # Using Gemini 2.0 Flash explicitly
                 generation_config={
                     "temperature": 0.1,
                     "max_output_tokens": 4096,
@@ -806,11 +806,27 @@ class LLMService:
                 }
             )
             
-            response = await model.generate_content_async([prompt_parts])
+            # Prepare the prompt as a single string
+            prompt_text = "\n".join(prompt_parts) if isinstance(prompt_parts, list) else prompt_parts
+            
+            # Generate content
+            response = await model.generate_content_async(prompt_text)
             
             # Parse response
+            if hasattr(response, 'text'):
+                response_text = response.text
+            elif hasattr(response, 'result'):
+                response_text = response.result()
+            elif hasattr(response, 'candidates') and response.candidates:
+                response_text = response.candidates[0].content.parts[0].text
+            else:
+                response_text = str(response)
+            
+            logger.info(f"Gemini response: {response_text}")
+            
+            # Parse the response to extract answers
             query_numbers = list(range(1, len(queries) + 1))
-            return self._parse_batch_response(response.text, query_numbers)
+            return self._parse_batch_response(response_text, query_numbers)
             
         except Exception as e:
             logger.error(f"Error processing image with Gemini: {e}")
@@ -912,7 +928,7 @@ class LLMService:
         try:
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel(
-                self.model_name,
+                "gemini-2.0-flash",  # Using Gemini 2.0 Flash explicitly
                 generation_config={
                     "temperature": 0.1,
                     "max_output_tokens": 4096,
@@ -927,18 +943,32 @@ class LLMService:
                 }
             )
 
+            # Generate content with error handling for different response formats
             response = await asyncio.wait_for(
                 model.generate_content_async(prompt),
                 timeout=timeout
             )
-            return response.text.strip() if response.text else "Unable to generate response"
             
-        except asyncio.TimeoutError:
-            logger.error(f"API call timeout with key ...{api_key[-4:]}")
-            raise Exception(f"Request timeout after {timeout}s - please try again")
+            # Handle different response formats
+            if hasattr(response, 'text'):
+                return response.text.strip()
+            elif hasattr(response, 'result'):
+                return response.result().strip()
+            elif hasattr(response, 'candidates') and response.candidates:
+                return response.candidates[0].content.parts[0].text.strip()
+            else:
+                logger.warning(f"Unexpected response format: {response}")
+                return str(response)
+            
+        except asyncio.TimeoutError as te:
+            error_msg = f"API call timed out after {timeout}s with key ...{api_key[-4:]}"
+            logger.error(error_msg)
+            raise Exception(error_msg) from te
+            
         except Exception as e:
-            logger.error(f"API call failed with key ...{api_key[-4:]}: {e}")
-            raise Exception(f"Gemini API call failed: {str(e)[:100]}")
+            error_msg = f"Gemini API call failed: {str(e)}"
+            logger.error(f"{error_msg} (key: ...{api_key[-4:]})")
+            raise Exception(error_msg) from e
 
     def _parse_batch_response(self, response_text: str, query_numbers: List[int]) -> Dict[str, str]:
         """Parse the batch response to extract individual answers with enhanced handling for different formats."""
@@ -1048,10 +1078,10 @@ class LLMService:
             # For PPTX files, send URL directly to Gemini
             if file_type == 'powerpoint':
                 try:
-                    # Configure Gemini
+                    # Configure Gemini with explicit model name
                     genai.configure(api_key=api_key)
                     model = genai.GenerativeModel(
-                        self.model_name,
+                        "gemini-2.0-flash",  # Using Gemini 2.0 Flash explicitly
                         generation_config={
                             "temperature": 0.1,
                             "max_output_tokens": 4096,
@@ -1066,7 +1096,7 @@ class LLMService:
                         }
                     )
                     
-                    # Prepare prompt with URL
+                    # Prepare prompt with URL and detailed instructions
                     prompt = self._prepare_file_analysis_prompt(queries)
                     message = f"Please analyze the presentation at this URL and answer the following questions.\nURL: {url}\n\n{prompt}"
                     
