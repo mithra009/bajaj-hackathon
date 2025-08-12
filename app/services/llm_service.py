@@ -1218,6 +1218,28 @@ class LLMService:
                     logger.error(f"Error processing PDF: {e}", exc_info=True)
                     return {str(i+1): f"Error processing PDF: {str(e)[:200]}" for i in range(len(queries))}
             
+            # For Word documents, extract text and process with Gemini
+            elif file_type == 'word':
+                try:
+                    # Download the file
+                    file_bytes = await asyncio.to_thread(self._download_file, url)
+                    if not file_bytes:
+                        return {str(i+1): "Error: No content could be retrieved from the URL" for i in range(len(queries))}
+                    
+                    # First try to extract text and process with Gemini
+                    extracted_text = self._extract_text_from_word(file_bytes)
+                    if extracted_text.strip():
+                        prompt = self._prepare_text_analysis_prompt(queries, extracted_text, file_type)
+                        response = await self._call_llm_batch(prompt, api_key)
+                        return self._parse_batch_response(response, list(range(1, len(queries) + 1)))
+                    else:
+                        # If text extraction fails, try direct file processing
+                        return await self._process_file_with_gemini(queries, file_bytes, file_type, api_key)
+                        
+                except Exception as e:
+                    logger.error(f"Error processing Word document: {e}", exc_info=True)
+                    return {str(i+1): f"Error processing Word document: {str(e)[:200]}" for i in range(len(queries))}
+            
             # For Excel files, process with direct Gemini upload
             elif file_type == 'excel':
                 try:
