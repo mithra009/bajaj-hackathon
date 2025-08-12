@@ -588,7 +588,6 @@ class LLMService:
                 "",
                 "QUESTIONS:"
             ]
-        ]
         
         for i, query in enumerate(queries, 1):
             prompt_parts.append(f"{i}. {query}")
